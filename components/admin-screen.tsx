@@ -1,0 +1,1315 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
+import {
+  Save, Mail, Info, MessageSquareText, Scale, LogOut,
+  BarChart3, Flag, FileText, Users, Crown, Megaphone, Briefcase, Ban, Clock, ShieldAlert,
+  Archive, Globe2, UserPlus, Lock, LockOpen, Camera, Link2, X, Gift, Search,
+} from "lucide-react";
+import { useI18n, ld } from "@/lib/i18n";
+import { useRequireAuth } from "@/lib/use-auth";
+import { apiGet, apiPatch, apiPost, apiUpload, getAccessToken } from "@/lib/api";
+import { getCountry, COUNTRIES } from "@/lib/countries";
+import { invalidateOpenCountries } from "@/lib/use-open-countries";
+
+type Settings = {
+  adminEmail: string; supportPhone: string; whatsapp: string;
+  aboutAr: string; aboutEn: string;
+  complaintsInfo: string; inquiriesInfo: string;
+  legalRepName: string; legalRepEmail: string; legalRepPhone: string;
+  legalRepAvatar: string; legalRepUserId: string;
+  address: string;
+  closedCountries: string; // CSV of ISO codes the admin switched off
+  sponsorName: string; sponsorLogo: string; sponsorText: string; sponsorUrl: string;
+  priceSubscription: number; priceSub3m: number; priceSub6m: number; priceSub12m: number; // USD bundles
+  priceJobApply: number; priceJobPost: number; priceSeekerAd: number;
+  priceAdBase: number; priceAdExtraCountry: number; priceAdExtraDay: number; // USD, ad formula
+};
+
+const EMPTY: Settings = {
+  adminEmail: "", supportPhone: "", whatsapp: "",
+  aboutAr: "", aboutEn: "",
+  complaintsInfo: "", inquiriesInfo: "",
+  legalRepName: "", legalRepEmail: "", legalRepPhone: "",
+  legalRepAvatar: "", legalRepUserId: "",
+  address: "",
+  closedCountries: "",
+  sponsorName: "", sponsorLogo: "", sponsorText: "", sponsorUrl: "",
+  priceSubscription: 4.99, priceSub3m: 13.99, priceSub6m: 26.99, priceSub12m: 53.99,
+  priceJobApply: 0, priceJobPost: 1.99, priceSeekerAd: 0.99,
+  priceAdBase: 49.99, priceAdExtraCountry: 15, priceAdExtraDay: 11,
+};
+
+/** Shrink an uploaded photo to a 256px JPEG data URL — same treatment as member avatars. */
+function fileToAvatar(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 256;
+      const scale = Math.min(max / img.width, max / img.height, 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("no ctx"));
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("bad image")); };
+    img.src = url;
+  });
+}
+
+type Stats = {
+  totalUsers: number; newUsers: number; premiumUsers: number; businessUsers: number; suspendedUsers: number;
+  subscriptionCount: number; subscriptionRevenue: number;
+  adsCount: number; advertisers: number; adRevenue: number;
+  jobsCount: number; jobPosters: number; jobRevenue: number;
+  reportsOpen: number; reportsTotal: number;
+  blockedPeople: number;
+};
+
+type RepUser = { id: string; name: string; email?: string | null; avatarUrl?: string | null; country?: string | null; suspendedUntil?: string | null };
+type Rep = {
+  id: string; kind: string; reason: string | null; status: string; createdAt: string;
+  reporter: RepUser | null; target: RepUser | null; mediaUrl: string | null; contentText: string | null;
+};
+
+type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "page";
+
+type PromoUser = {
+  id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null;
+  country?: string | null; accountType: string;
+  promoVideoUrl: string | null; promoLinkUrl: string | null; parentId: string | null;
+  branches: { id: string; name: string; avatarUrl: string | null }[];
+};
+
+type GrantUser = {
+  id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null;
+  country?: string | null; accountType: string; isPremium: boolean; premiumUntil: string | null; isAdmin: boolean;
+  freeAds: boolean; freeJobPost: boolean; freeSeekerAd: boolean;
+};
+
+type SuspUser = {
+  id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null;
+  country?: string | null; suspendedUntil: string | null; reason?: string | null;
+};
+
+type CountryStat = { code: string; users: number; closed: boolean };
+
+/** The running month as "YYYY-MM" — everything resets around it on the 1st. */
+function currentMonth(): string {
+  const n = new Date();
+  return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** The owner's dashboard — a real desktop admin panel: sidebar, wide grids, tables. */
+export default function AdminScreen() {
+  const router = useRouter();
+  const { t, dir, locale, setLocale } = useI18n();
+  const ready = useRequireAuth();
+
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [isOwner, setIsOwner] = useState(false); // THE owner sees admin management + the approval queue
+  const [grantReqs, setGrantReqs] = useState<{ id: string; requester: { id: string; name: string }; target: { id: string; name: string; avatarUrl: string | null }; months: number | null; until: string | null }[]>([]);
+  const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<Tab>("stats");
+  const [toast, setToast] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [countries, setCountries] = useState<CountryStat[]>([]);
+  const [selCountry, setSelCountry] = useState("all");
+  const [period, setPeriod] = useState<"month" | "all">("month"); // stats default to the running month
+  const [months, setMonths] = useState<string[]>([]);
+
+  // archive — any past month, replayed on demand
+  const [archStats, setArchStats] = useState<Stats | null>(null);
+  const [archMonth, setArchMonth] = useState<string>(currentMonth());
+  const [archCountry, setArchCountry] = useState("all");
+
+  const [repView, setRepView] = useState<"reports" | "suspended">("reports");
+  const [suspended, setSuspended] = useState<SuspUser[]>([]);
+  const [reports, setReports] = useState<Rep[]>([]);
+  const [days, setDays] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({}); // optional extra text for the suspension message
+  const [repCountries, setRepCountries] = useState<{ code: string; count: number }[]>([]);
+  const [repCountry, setRepCountry] = useState("all");
+  const [search, setSearch] = useState("");
+
+  // grants — gift premium and free-posting rights to specific members
+  const [grantQ, setGrantQ] = useState("");
+  const [grantResults, setGrantResults] = useState<GrantUser[]>([]);
+  const [grantSel, setGrantSel] = useState<GrantUser | null>(null);
+  const [grantDate, setGrantDate] = useState("");
+  const [busyGrant, setBusyGrant] = useState(false);
+
+  // sponsor & branches — the official sponsor's account, pinned video/link, branch links
+  const [spQ, setSpQ] = useState("");
+  const [spResults, setSpResults] = useState<GrantUser[]>([]);
+  const [spSel, setSpSel] = useState<PromoUser | null>(null);
+  const [sponsorUserId, setSponsorUserId] = useState("");
+  const [spLink, setSpLink] = useState("");
+  const [brQ, setBrQ] = useState("");
+  const [brResults, setBrResults] = useState<GrantUser[]>([]);
+  const [busyPromo, setBusyPromo] = useState(false);
+
+  const [s, setS] = useState<Settings>(EMPTY);
+  const [busy, setBusy] = useState(false);
+  const [lawyerAccount, setLawyerAccount] = useState(""); // email/phone typed by the admin to link the lawyer's account
+
+  function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2600); }
+
+  const loadStats = useCallback(async (country: string, p: "month" | "all") => {
+    const periodParam = p === "month" ? currentMonth() : "all";
+    const res = await apiGet<{ stats: Stats; countries: CountryStat[]; months: string[] }>(
+      `/api/admin/stats?country=${encodeURIComponent(country)}&period=${periodParam}`, getAccessToken() || undefined);
+    if (res.ok && res.data) { setStats(res.data.stats); setCountries(res.data.countries); setMonths(res.data.months); }
+  }, []);
+
+  const loadSuspended = useCallback(async () => {
+    const res = await apiGet<{ users: SuspUser[] }>("/api/admin/suspend", getAccessToken() || undefined);
+    if (res.ok && res.data?.users) setSuspended(res.data.users);
+  }, []);
+
+  const loadArchive = useCallback(async (month: string, country: string) => {
+    const res = await apiGet<{ stats: Stats }>(
+      `/api/admin/stats?country=${encodeURIComponent(country)}&period=${encodeURIComponent(month)}`,
+      getAccessToken() || undefined);
+    if (res.ok && res.data) setArchStats(res.data.stats);
+  }, []);
+
+  const loadReports = useCallback(async (country = "all", q = "") => {
+    const res = await apiGet<{ reports: Rep[]; countries: { code: string; count: number }[] }>(
+      `/api/admin/reports?country=${encodeURIComponent(country)}&q=${encodeURIComponent(q)}`,
+      getAccessToken() || undefined
+    );
+    if (res.ok && res.data?.reports) {
+      setReports(res.data.reports);
+      setRepCountries(res.data.countries ?? []);
+    }
+  }, []);
+
+  // defined before the boot effect below — they're in its dependency list
+  const loadGrantReqs = useCallback(async () => {
+    const res = await apiGet<{ requests: typeof grantReqs }>("/api/admin/grant-requests", getAccessToken() || undefined);
+    if (res.ok && res.data?.requests) setGrantReqs(res.data.requests);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadAdmins = useCallback(async () => {
+    const res = await apiGet<{ admins: { id: string }[] }>("/api/admin/admins", getAccessToken() || undefined);
+    if (res.ok && res.data?.admins) setAdminIds(new Set(res.data.admins.map((a) => a.id)));
+  }, []);
+
+  const loadSponsor = useCallback(async (userId?: string) => {
+    const res = await apiGet<{ sponsorUserId: string; user: PromoUser | null }>(
+      `/api/admin/promo${userId ? `?userId=${encodeURIComponent(userId)}` : ""}`, getAccessToken() || undefined);
+    if (res.ok && res.data) {
+      setSponsorUserId(res.data.sponsorUserId);
+      if (res.data.user) { setSpSel(res.data.user); setSpLink(res.data.user.promoLinkUrl ?? ""); }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const token = getAccessToken();
+    if (!token) return;
+    apiGet<{ user: { isAdmin?: boolean; isOwner?: boolean } }>("/api/auth/me", token).then((r) => {
+      const ok = !!(r.ok && r.data?.user?.isAdmin);
+      setAllowed(ok);
+      if (!ok) { router.replace("/home"); return; }
+      if (r.data?.user?.isOwner) { setIsOwner(true); loadGrantReqs(); loadAdmins(); }
+      loadStats("all", "month");
+      loadArchive(currentMonth(), "all");
+      loadReports();
+      loadSponsor(); // the current sponsor, ready when the tab opens
+      apiGet<{ settings: Settings }>("/api/settings").then((rs) => {
+        if (rs.ok && rs.data?.settings) setS({ ...EMPTY, ...rs.data.settings });
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, router, loadStats, loadArchive, loadReports, loadSponsor]);
+
+  function pickCountry(code: string) { setSelCountry(code); loadStats(code, period); }
+  function pickPeriod(p: "month" | "all") { setPeriod(p); loadStats(selCountry, p); }
+  function pickArchMonth(m: string) { setArchMonth(m); loadArchive(m, archCountry); }
+  function pickArchCountry(code: string) { setArchCountry(code); loadArchive(archMonth, code); }
+
+  // ----- countries open/close -----
+  const closedSet = new Set(s.closedCountries.split(",").map((c) => c.trim()).filter(Boolean));
+  async function toggleCountry(code: string) {
+    const next = new Set(closedSet);
+    if (next.has(code)) next.delete(code); else next.add(code);
+    const csv = [...next].join(",");
+    const res = await apiPatch("/api/settings", { closedCountries: csv }, getAccessToken() || undefined);
+    if (res.ok) {
+      setS((prev) => ({ ...prev, closedCountries: csv }));
+      invalidateOpenCountries();
+      flash(next.has(code) ? t("adm.countryClosedDone") : t("adm.countryOpenedDone"));
+      loadStats(selCountry, period); // refresh the closed badges on the pickers
+    } else flash(t("common.error"));
+  }
+
+  async function suspend(rep: Rep, liftIt: boolean) {
+    if (!rep.target) return;
+    const n = liftIt ? 0 : Math.max(1, parseInt(days[rep.id] || "3", 10) || 3);
+    // The app sends the generic suspension message automatically; the admin's
+    // note (or the report reason) rides along as the stated cause.
+    const res = await apiPost("/api/admin/suspend", {
+      userId: rep.target.id, days: n, reason: (notes[rep.id]?.trim() || rep.reason) || undefined, reportId: rep.id,
+    }, getAccessToken() || undefined);
+    if (res.ok) { flash(liftIt ? t("adm.liftDone") : t("adm.suspendDone")); loadReports(repCountry, search); loadStats(selCountry, period); }
+    else flash(t("common.error"));
+  }
+
+  async function markReviewed(rep: Rep) {
+    await apiPatch("/api/admin/reports", { id: rep.id, status: "reviewed" }, getAccessToken() || undefined);
+    loadReports(repCountry, search);
+  }
+
+  function pickRepCountry(code: string) { setRepCountry(code); loadReports(code, search); }
+  function runSearch() { loadReports(repCountry, search); }
+
+  // ----- grants -----
+  async function searchGrantUsers() {
+    const res = await apiGet<{ users: GrantUser[] }>(
+      `/api/admin/users?q=${encodeURIComponent(grantQ.trim())}`, getAccessToken() || undefined);
+    if (res.ok && res.data?.users) { setGrantResults(res.data.users); setGrantSel(null); }
+  }
+
+  async function grant(payload: Record<string, unknown>) {
+    if (!grantSel || busyGrant) return;
+    setBusyGrant(true);
+    const res = await apiPost<{ user?: GrantUser; pending?: boolean }>("/api/admin/grant", { userId: grantSel.id, ...payload }, getAccessToken() || undefined);
+    setBusyGrant(false);
+    if (res.ok && res.data?.pending) {
+      // a sub-admin's gift — parked in the owner's queue
+      flash(t("adm.grantPending"));
+    } else if (res.ok && res.data?.user) {
+      const u = res.data.user;
+      setGrantSel(u);
+      setGrantResults((list) => list.map((x) => (x.id === u.id ? u : x)));
+      flash(t("adm.grantDone"));
+    } else flash(t("common.error"));
+  }
+
+  // ----- owner-only: admins + the approval queue -----
+  async function decideGrantReq(id: string, approve: boolean) {
+    const res = await apiPost("/api/admin/grant-requests", { id, approve }, getAccessToken() || undefined);
+    if (res.ok) { flash(t("adm.grantDone")); loadGrantReqs(); }
+    else flash(t("common.error"));
+  }
+
+  async function toggleAdmin(userId: string, makeAdmin: boolean) {
+    const res = await apiPost("/api/admin/admins", { userId, makeAdmin }, getAccessToken() || undefined);
+    if (res.ok) { flash(t("adm.grantDone")); loadAdmins(); }
+    else flash(t("common.error"));
+  }
+
+  // ----- sponsor & branches -----
+  async function searchSponsorUsers(q: string, into: (u: GrantUser[]) => void) {
+    const res = await apiGet<{ users: GrantUser[] }>(
+      `/api/admin/users?q=${encodeURIComponent(q.trim())}`, getAccessToken() || undefined);
+    if (res.ok && res.data?.users) into(res.data.users);
+  }
+
+  async function promo(payload: Record<string, unknown>) {
+    if (!spSel || busyPromo) return;
+    setBusyPromo(true);
+    const res = await apiPost<{ sponsorUserId: string; user: PromoUser | null }>(
+      "/api/admin/promo", { userId: spSel.id, ...payload }, getAccessToken() || undefined);
+    setBusyPromo(false);
+    if (res.ok && res.data) {
+      setSponsorUserId(res.data.sponsorUserId);
+      if (res.data.user) { setSpSel(res.data.user); setSpLink(res.data.user.promoLinkUrl ?? ""); }
+      flash(t("adm.grantDone"));
+    } else flash(t("common.error"));
+  }
+
+  async function uploadPromoVideo(file: File) {
+    if (!spSel || busyPromo) return;
+    setBusyPromo(true);
+    const up = await apiUpload<{ url: string }>("/api/upload", file, getAccessToken() || undefined);
+    setBusyPromo(false);
+    if (up.ok && up.data?.url) promo({ videoUrl: up.data.url });
+    else flash(t("common.error"));
+  }
+
+  /** The "Suspended accounts" stat card lands here — straight onto the list. */
+  function openSuspended() { setTab("reports"); setRepView("suspended"); loadSuspended(); }
+
+  async function unsuspendUser(u: SuspUser) {
+    const res = await apiPost("/api/admin/suspend", { userId: u.id, days: 0 }, getAccessToken() || undefined);
+    if (res.ok) { flash(t("adm.liftDone")); loadSuspended(); loadStats(selCountry, period); }
+    else flash(t("common.error"));
+  }
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    // the account box only travels when the admin typed something — otherwise the link stays as-is
+    const payload = lawyerAccount.trim() ? { ...s, legalRepAccount: lawyerAccount.trim() } : s;
+    const res = await apiPatch<{ settings?: Settings; error?: string }>("/api/settings", payload, getAccessToken() || undefined);
+    setBusy(false);
+    if (res.ok) {
+      if (res.data?.settings) setS({ ...EMPTY, ...res.data.settings });
+      setLawyerAccount("");
+      flash(t("admin.saved"));
+    } else flash(t(res.data?.error === "lawyer_not_found" ? "admin.legalNotFound" : "common.error"));
+  }
+
+  async function unlinkLawyer() {
+    const res = await apiPatch<{ settings?: Settings }>("/api/settings", { legalRepAccount: "" }, getAccessToken() || undefined);
+    if (res.ok) { setS((prev) => ({ ...prev, legalRepUserId: "" })); flash(t("admin.saved")); }
+    else flash(t("common.error"));
+  }
+
+  async function pickLawyerPhoto(file: File) {
+    try { set("legalRepAvatar", await fileToAvatar(file)); } catch { /* ignore a bad file */ }
+  }
+  function set<K extends keyof Settings>(k: K, v: Settings[K]) { setS((prev) => ({ ...prev, [k]: v })); }
+
+  if (!ready || allowed !== true) return null;
+
+  const NAV: { k: Tab; icon: React.ReactNode; label: string; badge?: number }[] = [
+    { k: "stats", icon: <BarChart3 className="h-[18px] w-[18px]" />, label: t("adm.tabStats") },
+    { k: "archive", icon: <Archive className="h-[18px] w-[18px]" />, label: t("adm.tabArchive") },
+    { k: "reports", icon: <Flag className="h-[18px] w-[18px]" />, label: t("adm.tabReports"), badge: stats?.reportsOpen || 0 },
+    { k: "countries", icon: <Globe2 className="h-[18px] w-[18px]" />, label: t("adm.tabCountries"), badge: closedSet.size },
+    { k: "grants", icon: <Gift className="h-[18px] w-[18px]" />, label: t("adm.tabGrants") },
+    { k: "sponsor", icon: <Crown className="h-[18px] w-[18px]" />, label: t("adm.tabSponsor") },
+    { k: "page", icon: <FileText className="h-[18px] w-[18px]" />, label: t("adm.tabPage") },
+  ];
+
+  /** "2026-07" → "July 2026" / "يوليو ٢٠٢٦". */
+  const monthLabel = (m: string) => {
+    const [y, mo] = m.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString(locale === "ar" ? "ar" : "en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+  };
+
+  return (
+    <div dir={dir} className="flex min-h-[100dvh]">
+      {/* ===== sidebar (top bar on phones) ===== */}
+      <aside className="fixed inset-x-0 top-0 z-20 flex items-center gap-1 bg-[#131743] px-3 py-2 md:sticky md:top-0 md:h-[100dvh] md:w-60 md:shrink-0 md:flex-col md:items-stretch md:gap-0 md:px-4 md:py-6">
+        <p className="hidden text-[19px] font-extrabold text-white md:block">PRFET</p>
+        <p className="mb-0 hidden text-[11.5px] font-bold text-white/50 md:mb-6 md:block">{t("admin.title")}</p>
+        <nav className="flex flex-1 items-center gap-1 md:flex-none md:flex-col md:items-stretch md:gap-1.5">
+          {NAV.map((o) => (
+            <button key={o.k} onClick={() => setTab(o.k)}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold transition-colors md:flex-none md:justify-start ${
+                tab === o.k ? "bg-white text-[#131743]" : "text-white/75 hover:bg-white/10"
+              }`}>
+              {o.icon}
+              <span>{o.label}</span>
+              {!!o.badge && (
+                <span className="ms-auto hidden rounded-full bg-red-500 px-2 py-0.5 text-[10.5px] font-extrabold text-white md:inline">{ld(o.badge, locale)}</span>
+              )}
+              {!!o.badge && <span className="rounded-full bg-red-500 px-1.5 text-[10px] font-extrabold text-white md:hidden">{ld(o.badge, locale)}</span>}
+            </button>
+          ))}
+        </nav>
+        {/* dashboard language — flips instantly, saved like everywhere else in the app */}
+        <button onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
+          className="flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold text-white/75 hover:bg-white/10 md:mt-auto md:justify-start">
+          <Globe2 className="h-[18px] w-[18px]" /> <span>{locale === "ar" ? "English" : "العربية"}</span>
+        </button>
+        <button onClick={() => router.push("/home")}
+          className="flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-[13px] font-bold text-white/75 hover:bg-white/10 md:justify-start">
+          <LogOut className="h-[18px] w-[18px]" /> <span className="hidden md:inline">{t("adm.backToApp")}</span>
+        </button>
+      </aside>
+
+      {/* ===== main ===== */}
+      <main className="w-full flex-1 px-4 pb-10 pt-16 md:px-8 md:pt-8 lg:px-12">
+        {/* ---------- STATS ---------- */}
+        {tab === "stats" && (
+          <>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h1 className="text-[22px] font-extrabold text-ink">{t("adm.tabStats")}</h1>
+                {/* the numbers roll over on the 1st — this flips between the running month and since-launch */}
+                <div className="flex overflow-hidden rounded-full ring-1 ring-slate-200">
+                  <button onClick={() => pickPeriod("month")}
+                    className={`px-3.5 py-1.5 text-[12px] font-extrabold ${period === "month" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
+                    {t("adm.thisMonth")}
+                  </button>
+                  <button onClick={() => pickPeriod("all")}
+                    className={`px-3.5 py-1.5 text-[12px] font-extrabold ${period === "all" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
+                    {t("adm.allTime")}
+                  </button>
+                </div>
+              </div>
+              <CountryFilter value={selCountry} onPick={pickCountry} counts={countries} />
+            </div>
+
+            {stats && <StatsGrid stats={stats} monthMode={period === "month"} onReports={() => { setTab("reports"); setRepView("reports"); }} onSuspended={openSuspended} />}
+          </>
+        )}
+
+        {/* ---------- ARCHIVE — replay any past month ---------- */}
+        {tab === "archive" && (
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h1 className="text-[22px] font-extrabold text-ink">{t("adm.tabArchive")}</h1>
+              <CountryFilter value={archCountry} onPick={pickArchCountry} counts={countries} />
+            </div>
+            <p className="mb-4 text-[12.5px] font-medium text-muted">{t("adm.archiveHint")}</p>
+
+            {/* month picker — newest first, back to the very first member */}
+            <div className="no-scrollbar mb-6 flex items-center gap-2 overflow-x-auto pb-1">
+              {months.map((m) => (
+                <button key={m} onClick={() => pickArchMonth(m)}
+                  className={`shrink-0 rounded-full px-4 py-2 text-[12.5px] font-bold ${archMonth === m ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+                  {monthLabel(m)}{m === currentMonth() ? ` · ${t("adm.runningMonth")}` : ""}
+                </button>
+              ))}
+            </div>
+
+            {archStats && <StatsGrid stats={archStats} monthMode onReports={() => { setTab("reports"); setRepView("reports"); }} onSuspended={openSuspended} />}
+          </>
+        )}
+
+        {/* ---------- COUNTRIES — open / close any country ---------- */}
+        {tab === "countries" && (
+          <>
+            <h1 className="mb-2 text-[22px] font-extrabold text-ink">{t("adm.tabCountries")}</h1>
+            <p className="mb-6 max-w-2xl text-[12.5px] font-medium leading-relaxed text-muted">{t("adm.countriesHint")}</p>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {COUNTRIES.map((c) => {
+                const isClosed = closedSet.has(c.code);
+                const users = countries.find((x) => x.code === c.code)?.users ?? 0;
+                return (
+                  <div key={c.code} className={`flex items-center gap-3 rounded-2xl p-3.5 ring-1 ${isClosed ? "bg-red-50/60 ring-red-200" : "bg-white ring-slate-200"}`}>
+                    <span className="text-xl leading-none">{c.flag}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13.5px] font-extrabold text-ink">{c[locale]}</p>
+                      <p className="text-[11.5px] font-medium text-muted">
+                        {ld(users, locale)} {t("adm.users")}{isClosed ? ` · ${t("adm.closedBadge")}` : ""}
+                      </p>
+                    </div>
+                    <button onClick={() => toggleCountry(c.code)}
+                      className={`flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-3 text-[12px] font-extrabold active:scale-95 ${
+                        isClosed ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-slate-100 text-ink hover:bg-red-100 hover:text-red-600"
+                      }`}>
+                      {isClosed ? <LockOpen className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />}
+                      {isClosed ? t("adm.reopenCountry") : t("adm.closeCountry")}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ---------- GRANTS — gift premium & free posting to specific members ---------- */}
+        {tab === "grants" && (
+          <>
+            <h1 className="mb-2 text-[22px] font-extrabold text-ink">{t("adm.tabGrants")}</h1>
+            <p className="mb-5 max-w-2xl text-[12.5px] font-medium leading-relaxed text-muted">{t("adm.grantHint")}</p>
+
+            {/* the owner's approval queue — sub-admin gifts waiting for a verdict */}
+            {isOwner && grantReqs.length > 0 && (
+              <div className="mb-6 max-w-2xl rounded-3xl bg-amber-50 p-4 ring-1 ring-amber-200">
+                <p className="mb-3 text-[13px] font-extrabold text-amber-800">⏳ {t("adm.pendingReqs")} ({ld(grantReqs.length, locale)})</p>
+                <div className="flex flex-col gap-2">
+                  {grantReqs.map((r) => (
+                    <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-2xl bg-white px-3.5 py-3 ring-1 ring-amber-100">
+                      <p className="min-w-0 flex-1 text-[12.5px] font-bold text-ink">
+                        {r.requester.name} ← 🎁 → <span className="font-extrabold">{r.target.name}</span>
+                        <span className="ms-1.5 text-muted">
+                          {r.months ? `(${ld(r.months, locale)} ${locale === "ar" ? "شهر" : "mo"})` : r.until ? `(${new Date(r.until).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")})` : ""}
+                        </span>
+                      </p>
+                      <button onClick={() => decideGrantReq(r.id, true)} className="h-9 rounded-xl bg-emerald-600 px-3.5 text-[12px] font-extrabold text-white hover:bg-emerald-700 active:scale-95">
+                        {t("adm.approve")}
+                      </button>
+                      <button onClick={() => decideGrantReq(r.id, false)} className="h-9 rounded-xl bg-red-50 px-3.5 text-[12px] font-bold text-red-600 hover:bg-red-100 active:scale-95">
+                        {t("adm.deny")}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* find the member */}
+            <div className="mb-5 flex w-full max-w-md items-center gap-2">
+              <input
+                value={grantQ}
+                onChange={(e) => setGrantQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") searchGrantUsers(); }}
+                placeholder={t("adm.grantSearchPh")}
+                className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500"
+              />
+              <button onClick={searchGrantUsers} className="flex h-11 shrink-0 items-center gap-1.5 rounded-2xl bg-[#131743] px-5 text-[13px] font-bold text-white active:scale-95">
+                <Search className="h-4 w-4" /> {t("discover.search")}
+              </button>
+            </div>
+
+            {/* results */}
+            {grantResults.length > 0 && (
+              <div className="mb-6 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {grantResults.map((u) => (
+                  <button key={u.id} onClick={() => { setGrantSel(u); setGrantDate(""); }}
+                    className={`flex items-center gap-3 rounded-2xl p-3 text-start ring-1 ${grantSel?.id === u.id ? "bg-brand-50 ring-brand-300" : "bg-white ring-slate-200 hover:ring-slate-300"}`}>
+                    {u.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={u.avatarUrl} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+                    ) : (
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-[14px] font-extrabold text-brand-600">{(u.name || "•").charAt(0).toUpperCase()}</span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-extrabold text-ink">{u.name}{u.isPremium ? " 👑" : ""}</span>
+                      <span className="block truncate text-[11.5px] font-medium text-muted" dir="ltr">{u.email ?? u.phone ?? ""}</span>
+                    </span>
+                    {u.country && <span className="shrink-0 text-[14px]">{getCountry(u.country)?.flag ?? ""}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* the selected member — everything the admin can gift */}
+            {grantSel && (
+              <div className="max-w-2xl rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <p className="text-[15px] font-extrabold text-ink">
+                    {grantSel.name}{(adminIds.has(grantSel.id) || grantSel.isAdmin) ? " 🛡️" : ""}
+                  </p>
+                  {/* only THE owner mints or removes admins */}
+                  {isOwner && (
+                    (adminIds.has(grantSel.id) || grantSel.isAdmin) ? (
+                      <button onClick={() => toggleAdmin(grantSel.id, false)} disabled={busyGrant}
+                        className="h-9 rounded-xl bg-red-50 px-3.5 text-[12px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
+                        {t("adm.removeAdmin")}
+                      </button>
+                    ) : (
+                      <button onClick={() => toggleAdmin(grantSel.id, true)} disabled={busyGrant}
+                        className="h-9 rounded-xl bg-[#131743] px-3.5 text-[12px] font-extrabold text-white active:scale-95 disabled:opacity-40">
+                        🛡️ {t("adm.makeAdmin")}
+                      </button>
+                    )
+                  )}
+                </div>
+                <p className="mb-4 text-[12px] font-medium text-muted">
+                  {grantSel.isPremium && grantSel.premiumUntil
+                    ? `${t("settings.premiumUntil")} ${new Date(grantSel.premiumUntil).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")} 👑`
+                    : t("adm.grantNoPremium")}
+                </p>
+
+                {/* gift a bundle — stacks on any remaining time */}
+                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantPremium")}</p>
+                <div className="mb-3 grid grid-cols-4 gap-2">
+                  {([1, 3, 6, 12] as const).map((m) => (
+                    <button key={m} onClick={() => grant({ premiumMonths: m })} disabled={busyGrant}
+                      className="rounded-2xl border-2 border-slate-200 bg-white py-2.5 text-[12.5px] font-extrabold text-ink hover:border-amber-400 disabled:opacity-40">
+                      🎁 {t(`premium.m${m}`)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* or an exact end date */}
+                <div className="mb-4 flex items-center gap-2">
+                  <input type="date" value={grantDate} onChange={(e) => setGrantDate(e.target.value)} dir="ltr"
+                    className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <button onClick={() => { if (grantDate) grant({ premiumUntil: grantDate }); }} disabled={busyGrant || !grantDate}
+                    className="h-11 shrink-0 rounded-2xl bg-amber-500 px-4 text-[12.5px] font-extrabold text-white hover:bg-amber-600 disabled:opacity-40">
+                    {t("adm.grantUntilDate")}
+                  </button>
+                  {grantSel.isPremium && (
+                    <button onClick={() => grant({ revokePremium: true })} disabled={busyGrant}
+                      className="h-11 shrink-0 rounded-2xl bg-red-50 px-4 text-[12.5px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
+                      {t("adm.grantRevoke")}
+                    </button>
+                  )}
+                </div>
+
+                {/* free posting rights */}
+                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantFreeSection")}</p>
+                <div className="flex flex-col gap-2">
+                  {([
+                    { k: "freeAds" as const, label: t("adm.grantFreeAds") },
+                    { k: "freeJobPost" as const, label: t("adm.grantFreeJobs") },
+                    { k: "freeSeekerAd" as const, label: t("adm.grantFreeSeeker") },
+                  ]).map((o) => (
+                    <button key={o.k} onClick={() => grant({ [o.k]: !grantSel[o.k] })} disabled={busyGrant}
+                      className={`flex items-center justify-between rounded-2xl px-4 py-3 ring-1 disabled:opacity-40 ${grantSel[o.k] ? "bg-emerald-50 ring-emerald-300" : "bg-white ring-slate-200 hover:ring-slate-300"}`}>
+                      <span className={`text-[13px] font-bold ${grantSel[o.k] ? "text-emerald-700" : "text-ink"}`}>{o.label}</span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${grantSel[o.k] ? "bg-emerald-600 text-white" : "bg-slate-100 text-muted"}`}>
+                        {grantSel[o.k] ? t("adm.grantOn") : t("adm.grantOff")}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ---------- SPONSOR & BRANCHES ---------- */}
+        {tab === "sponsor" && (
+          <>
+            <h1 className="mb-2 text-[22px] font-extrabold text-ink">{t("adm.tabSponsor")}</h1>
+            <p className="mb-5 max-w-2xl text-[12.5px] font-medium leading-relaxed text-muted">{t("adm.sponsorTabHint")}</p>
+
+            {/* find the account */}
+            <div className="mb-3 flex w-full max-w-md items-center gap-2">
+              <input
+                value={spQ}
+                onChange={(e) => setSpQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") searchSponsorUsers(spQ, setSpResults); }}
+                placeholder={t("adm.grantSearchPh")}
+                className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500"
+              />
+              <button onClick={() => searchSponsorUsers(spQ, setSpResults)} className="flex h-11 shrink-0 items-center gap-1.5 rounded-2xl bg-[#131743] px-5 text-[13px] font-bold text-white active:scale-95">
+                <Search className="h-4 w-4" /> {t("discover.search")}
+              </button>
+              {sponsorUserId && spSel?.id !== sponsorUserId && (
+                <button onClick={() => loadSponsor()} className="h-11 shrink-0 rounded-2xl bg-amber-50 px-4 text-[12.5px] font-bold text-amber-600 ring-1 ring-amber-200">
+                  👑 {t("adm.sponsorCurrent")}
+                </button>
+              )}
+            </div>
+
+            {spResults.length > 0 && (
+              <div className="mb-5 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {spResults.map((u) => (
+                  <button key={u.id} onClick={() => loadSponsor(u.id)}
+                    className={`flex items-center gap-3 rounded-2xl p-3 text-start ring-1 ${spSel?.id === u.id ? "bg-brand-50 ring-brand-300" : "bg-white ring-slate-200 hover:ring-slate-300"}`}>
+                    {u.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={u.avatarUrl} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+                    ) : (
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-[14px] font-extrabold text-brand-600">{(u.name || "•").charAt(0).toUpperCase()}</span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-extrabold text-ink">{u.name}{u.id === sponsorUserId ? " 👑" : ""}</span>
+                      <span className="block truncate text-[11.5px] font-medium text-muted" dir="ltr">{u.email ?? u.phone ?? ""}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {spSel && (
+              <div className="max-w-2xl rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <p className="text-[15px] font-extrabold text-ink">{spSel.name}{spSel.id === sponsorUserId ? " 👑" : ""}</p>
+                  {spSel.id === sponsorUserId ? (
+                    <button onClick={() => promo({ makeSponsor: false })} disabled={busyPromo}
+                      className="h-10 rounded-xl bg-red-50 px-4 text-[12.5px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
+                      {t("adm.sponsorRemove")}
+                    </button>
+                  ) : (
+                    <button onClick={() => promo({ makeSponsor: true })} disabled={busyPromo}
+                      className="h-10 rounded-xl bg-amber-500 px-4 text-[12.5px] font-extrabold text-white hover:bg-amber-600 disabled:opacity-40">
+                      👑 {t("adm.sponsorAppoint")}
+                    </button>
+                  )}
+                </div>
+
+                {/* the pinned video */}
+                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.sponsorVideo")}</p>
+                {spSel.promoVideoUrl && (
+                  <video src={spSel.promoVideoUrl} controls preload="metadata" className="mb-2 max-h-56 w-full rounded-2xl bg-black" />
+                )}
+                <div className="mb-4 flex items-center gap-2">
+                  <label className={`flex h-10 cursor-pointer items-center gap-1.5 rounded-xl bg-slate-100 px-3 text-[12px] font-bold text-ink hover:bg-slate-200 ${busyPromo ? "pointer-events-none opacity-40" : ""}`}>
+                    <Camera className="h-3.5 w-3.5" /> {spSel.promoVideoUrl ? t("adm.sponsorVideoReplace") : t("adm.sponsorVideoAdd")}
+                    <input type="file" accept="video/*" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadPromoVideo(f); e.target.value = ""; }} />
+                  </label>
+                  {spSel.promoVideoUrl && (
+                    <button onClick={() => promo({ videoUrl: null })} disabled={busyPromo}
+                      className="flex h-10 items-center gap-1.5 rounded-xl bg-red-50 px-3 text-[12px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
+                      <X className="h-3.5 w-3.5" /> {t("admin.legalPhotoRemove")}
+                    </button>
+                  )}
+                </div>
+
+                {/* the link under the video */}
+                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.sponsorLink")}</p>
+                <div className="mb-5 flex items-center gap-2">
+                  <input value={spLink} onChange={(e) => setSpLink(e.target.value)} dir="ltr"
+                    placeholder="https://…"
+                    className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <button onClick={() => promo({ linkUrl: spLink })} disabled={busyPromo}
+                    className="h-11 shrink-0 rounded-2xl bg-brand-600 px-4 text-[12.5px] font-extrabold text-white hover:bg-brand-700 disabled:opacity-40">
+                    {t("admin.save")}
+                  </button>
+                </div>
+
+                {/* branches */}
+                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.branches")}</p>
+                {spSel.branches.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {spSel.branches.map((br) => (
+                      <span key={br.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+                        <span className="text-[12.5px] font-bold text-ink">{br.name}</span>
+                        <button onClick={() => promo({ removeBranchId: br.id })} disabled={busyPromo} aria-label="remove"
+                          className="grid h-5 w-5 place-items-center rounded-full bg-red-50 text-red-600 hover:bg-red-100">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input value={brQ} onChange={(e) => setBrQ(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") searchSponsorUsers(brQ, setBrResults); }}
+                    placeholder={t("adm.branchSearchPh")}
+                    className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <button onClick={() => searchSponsorUsers(brQ, setBrResults)}
+                    className="h-11 shrink-0 rounded-2xl bg-[#131743] px-4 text-[12.5px] font-bold text-white active:scale-95">
+                    <Search className="h-4 w-4" />
+                  </button>
+                </div>
+                {brResults.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {brResults.filter((u) => u.id !== spSel.id && !spSel.branches.some((b) => b.id === u.id)).map((u) => (
+                      <button key={u.id} onClick={() => { promo({ addBranchId: u.id }); setBrResults([]); setBrQ(""); }}
+                        disabled={busyPromo}
+                        className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-3 py-2.5 text-start hover:bg-brand-50 disabled:opacity-40">
+                        <span className="text-[13px] font-bold text-ink">＋ {u.name}</span>
+                        <span className="truncate text-[11px] font-medium text-muted" dir="ltr">{u.email ?? u.phone ?? ""}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ---------- REPORTS ---------- */}
+        {tab === "reports" && (
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h1 className="text-[22px] font-extrabold text-ink">{t("adm.tabReports")}</h1>
+                <div className="flex overflow-hidden rounded-full ring-1 ring-slate-200">
+                  <button onClick={() => setRepView("reports")}
+                    className={`px-3.5 py-1.5 text-[12px] font-extrabold ${repView === "reports" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
+                    {t("adm.viewReports")}
+                  </button>
+                  <button onClick={() => { setRepView("suspended"); loadSuspended(); }}
+                    className={`px-3.5 py-1.5 text-[12px] font-extrabold ${repView === "suspended" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
+                    {t("adm.viewSuspended")}
+                  </button>
+                </div>
+              </div>
+              {/* search accounts / keywords across ALL reports, old ones included */}
+              {repView === "reports" && (
+              <div className="flex w-full max-w-md items-center gap-2">
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") runSearch(); }}
+                  placeholder={t("adm.searchPh")}
+                  className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500"
+                />
+                <button onClick={runSearch} className="h-11 shrink-0 rounded-2xl bg-[#131743] px-5 text-[13px] font-bold text-white active:scale-95">
+                  {t("discover.search")}
+                </button>
+              </div>
+              )}
+            </div>
+
+            {repView === "reports" && (
+            <>
+            {/* reports per country — chips with counts, plus the whole world */}
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              <button onClick={() => pickRepCountry("all")}
+                className={`rounded-full px-4 py-2 text-[12.5px] font-bold ${repCountry === "all" ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+                🌍 {t("adm.allCountries")}
+              </button>
+              {repCountries.map((c) => {
+                const info = getCountry(c.code);
+                return (
+                  <button key={c.code} onClick={() => pickRepCountry(c.code)}
+                    className={`rounded-full px-4 py-2 text-[12.5px] font-bold ${repCountry === c.code ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+                    {info?.flag ?? "🏳"} {info?.[locale] ?? c.code} · {ld(c.count, locale)}
+                  </button>
+                );
+              })}
+            </div>
+
+            {reports.length === 0 ? (
+              <div className="grid place-items-center rounded-3xl bg-white py-20 ring-1 ring-slate-200">
+                <Flag className="h-9 w-9 text-slate-300" />
+                <p className="mt-2 text-[14px] font-bold text-muted">{t("adm.noReports")}</p>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {reports.map((r) => (
+                  <div key={r.id} className={`flex flex-col overflow-hidden rounded-3xl bg-white ring-1 ${r.status === "open" ? "ring-red-200" : "ring-slate-200"}`}>
+                    {r.mediaUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={r.mediaUrl} alt="" className="max-h-48 w-full object-cover" />
+                    )}
+                    <div className="flex flex-1 flex-col p-4">
+                      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[10.5px] font-extrabold text-brand-700">{t(`adm.kind.${r.kind}`)}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-extrabold ${r.status === "open" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                          {t(`adm.status.${r.status}`)}
+                        </span>
+                        {r.target?.suspendedUntil && (
+                          <span className="flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-[10.5px] font-extrabold text-orange-600">
+                            <Clock className="h-3 w-3" /> {t("adm.suspendedUntilShort")} {new Date(r.target.suspendedUntil).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[14px] font-extrabold text-ink">
+                        {r.target ? r.target.name : "—"}
+                        {r.target?.country && <span className="ms-1.5 text-[11.5px] font-medium text-muted">({getCountry(r.target.country)?.[locale] ?? r.target.country})</span>}
+                      </p>
+                      <p className="mt-0.5 text-[12px] font-medium text-muted">{t("adm.reportedBy")}: {r.reporter?.name ?? "—"} · {new Date(r.createdAt).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")}</p>
+                      {/* the evidence — a reported chat message / caption shows as a quote */}
+                      {r.contentText && (
+                        <p className="mt-2 rounded-xl border-s-4 border-violet-400 bg-violet-50 p-2.5 text-[12.5px] font-medium text-ink">
+                          {t("adm.content")}: “{r.contentText}”
+                        </p>
+                      )}
+                      {r.reason && <p className="mt-2 rounded-xl bg-slate-50 p-2.5 text-[12.5px] font-medium text-ink">{t("adm.reason")}: {r.reason}</p>}
+
+                      {/* optional extra line the admin adds to the automatic suspension message */}
+                      {r.target && !r.target.suspendedUntil && (
+                        <input
+                          value={notes[r.id] ?? ""}
+                          onChange={(e) => setNotes((d) => ({ ...d, [r.id]: e.target.value }))}
+                          placeholder={t("adm.notePh")}
+                          className="mt-2 h-10 w-full rounded-xl border-2 border-slate-200 bg-white px-3 text-[12.5px] font-medium text-ink outline-none focus:border-brand-500"
+                        />
+                      )}
+
+                      {r.target && (
+                        <div className="mt-auto flex items-center gap-2 pt-3">
+                          {r.target.suspendedUntil ? (
+                            <button onClick={() => suspend(r, true)} className="h-10 flex-1 rounded-xl bg-emerald-600 text-[12.5px] font-extrabold text-white hover:bg-emerald-700 active:scale-[0.98]">
+                              {t("adm.unsuspend")}
+                            </button>
+                          ) : (
+                            <>
+                              <input type="number" min={1} max={365} inputMode="numeric" value={days[r.id] ?? "3"}
+                                onChange={(e) => setDays((d) => ({ ...d, [r.id]: e.target.value }))} dir="ltr"
+                                className="h-10 w-16 rounded-xl border-2 border-slate-200 bg-white text-center text-[14px] font-extrabold text-ink outline-none focus:border-brand-500" />
+                              <span className="text-[11.5px] font-bold text-muted">{t("adm.days")}</span>
+                              <button onClick={() => suspend(r, false)} className="h-10 flex-1 rounded-xl bg-red-500 text-[12.5px] font-extrabold text-white hover:bg-red-600 active:scale-[0.98]">
+                                {t("adm.suspend")}
+                              </button>
+                            </>
+                          )}
+                          {r.status === "open" && (
+                            <button onClick={() => markReviewed(r)} className="h-10 rounded-xl bg-slate-100 px-3 text-[12px] font-bold text-ink hover:bg-slate-200 active:scale-[0.98]">
+                              {t("adm.markReviewed")}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            </>
+            )}
+
+            {/* the suspended list — every locked account, with a release button */}
+            {repView === "suspended" && (
+              suspended.length === 0 ? (
+                <div className="grid place-items-center rounded-3xl bg-white py-20 ring-1 ring-slate-200">
+                  <ShieldAlert className="h-9 w-9 text-slate-300" />
+                  <p className="mt-2 text-[14px] font-bold text-muted">{t("adm.noSuspended")}</p>
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {suspended.map((u) => (
+                    <div key={u.id} className="flex flex-col rounded-3xl bg-white p-4 ring-1 ring-orange-200">
+                      <div className="flex items-center gap-3">
+                        {u.avatarUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={u.avatarUrl} alt="" className="h-11 w-11 rounded-2xl object-cover" />
+                        ) : (
+                          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-50 text-orange-500"><Ban className="h-5 w-5" /></span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[14px] font-extrabold text-ink">{u.name}</p>
+                          <p className="truncate text-[11.5px] font-medium text-muted" dir="ltr">{u.email ?? u.phone ?? ""}</p>
+                        </div>
+                        {u.country && (
+                          <span className="shrink-0 text-[11.5px] font-bold text-muted">
+                            {getCountry(u.country)?.flag ?? ""} {getCountry(u.country)?.[locale] ?? u.country}
+                          </span>
+                        )}
+                      </div>
+                      {u.suspendedUntil && (
+                        <p className="mt-2.5 flex items-center gap-1.5 rounded-xl bg-orange-50 px-3 py-2 text-[12px] font-bold text-orange-700">
+                          <Clock className="h-3.5 w-3.5" /> {t("adm.suspendedUntilShort")} {new Date(u.suspendedUntil).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")}
+                        </p>
+                      )}
+                      {u.reason && <p className="mt-2 rounded-xl bg-slate-50 p-2.5 text-[12.5px] font-medium text-ink">{t("adm.reason")}: {u.reason}</p>}
+                      <button onClick={() => unsuspendUser(u)}
+                        className="mt-3 h-10 rounded-xl bg-emerald-600 text-[12.5px] font-extrabold text-white hover:bg-emerald-700 active:scale-[0.98]">
+                        {t("adm.unsuspend")}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </>
+        )}
+
+        {/* ---------- PAGE SETTINGS ---------- */}
+        {tab === "page" && (
+          <>
+            <h1 className="mb-6 text-[22px] font-extrabold text-ink">{t("adm.tabPage")}</h1>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card icon={<Mail className="h-4 w-4 text-brand-600" />} title={t("admin.contactSection")}>
+                <Field label={t("admin.adminEmail")} value={s.adminEmail} onChange={(v) => set("adminEmail", v)} ltr />
+                <Field label={t("admin.supportPhone")} value={s.supportPhone} onChange={(v) => set("supportPhone", v)} ltr />
+                <Field label={t("admin.whatsapp")} value={s.whatsapp} onChange={(v) => set("whatsapp", v)} ltr />
+                <Field label={t("admin.address")} value={s.address} onChange={(v) => set("address", v)} />
+              </Card>
+              <Card icon={<Scale className="h-4 w-4 text-violet-600" />} title={t("admin.legalSection")}>
+                {/* his photo — shown on the contact page next to his details */}
+                <div className="flex items-center gap-3">
+                  {s.legalRepAvatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.legalRepAvatar} alt="" className="h-16 w-16 rounded-2xl object-cover ring-1 ring-slate-200" />
+                  ) : (
+                    <span className="grid h-16 w-16 place-items-center rounded-2xl bg-violet-50 text-violet-400"><Scale className="h-6 w-6" /></span>
+                  )}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="flex h-9 cursor-pointer items-center gap-1.5 rounded-xl bg-slate-100 px-3 text-[12px] font-bold text-ink hover:bg-slate-200">
+                      <Camera className="h-3.5 w-3.5" /> {t("admin.legalPhoto")}
+                      <input type="file" accept="image/*" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) pickLawyerPhoto(f); e.target.value = ""; }} />
+                    </label>
+                    {s.legalRepAvatar && (
+                      <button onClick={() => set("legalRepAvatar", "")}
+                        className="flex h-9 items-center gap-1.5 rounded-xl bg-red-50 px-3 text-[12px] font-bold text-red-600 hover:bg-red-100">
+                        <X className="h-3.5 w-3.5" /> {t("admin.legalPhotoRemove")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <Field label={t("admin.legalName")} value={s.legalRepName} onChange={(v) => set("legalRepName", v)} />
+                <Field label={t("admin.legalEmail")} value={s.legalRepEmail} onChange={(v) => set("legalRepEmail", v)} ltr />
+                <Field label={t("admin.legalPhone")} value={s.legalRepPhone} onChange={(v) => set("legalRepPhone", v)} ltr />
+
+                {/* his in-app account — when linked, the contact page grows a "message him" button */}
+                <div>
+                  <span className="mb-1 block text-[11.5px] font-bold text-muted">{t("admin.legalAccount")}</span>
+                  {s.legalRepUserId ? (
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-11 flex-1 items-center gap-2 rounded-2xl bg-emerald-50 px-3.5 text-[13px] font-bold text-emerald-700">
+                        <Link2 className="h-4 w-4" /> {t("admin.legalLinked")}
+                      </span>
+                      <button onClick={unlinkLawyer}
+                        className="h-11 rounded-2xl bg-red-50 px-4 text-[12.5px] font-bold text-red-600 hover:bg-red-100">
+                        {t("admin.legalUnlink")}
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      value={lawyerAccount}
+                      onChange={(e) => setLawyerAccount(e.target.value)}
+                      dir="ltr"
+                      placeholder={t("admin.legalAccountPh")}
+                      className="h-11 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500"
+                    />
+                  )}
+                  <p className="mt-1 text-[11px] font-medium leading-snug text-muted">{t("admin.legalAccountHint")}</p>
+                </div>
+              </Card>
+              {/* the official sponsor — fills the white /sponsor page; all empty = page closed */}
+              <Card icon={<Crown className="h-4 w-4 text-amber-500" />} title={t("admin.sponsorSection")}>
+                <div className="flex items-center gap-3">
+                  {s.sponsorLogo ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={s.sponsorLogo} alt="" className="h-16 w-16 rounded-2xl object-contain ring-1 ring-slate-200" />
+                  ) : (
+                    <span className="grid h-16 w-16 place-items-center rounded-2xl bg-amber-50 text-amber-400"><Crown className="h-6 w-6" /></span>
+                  )}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="flex h-9 cursor-pointer items-center gap-1.5 rounded-xl bg-slate-100 px-3 text-[12px] font-bold text-ink hover:bg-slate-200">
+                      <Camera className="h-3.5 w-3.5" /> {t("admin.sponsorLogo")}
+                      <input type="file" accept="image/*" className="hidden"
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (f) { try { set("sponsorLogo", await fileToAvatar(f)); } catch { /* bad file */ } } e.target.value = ""; }} />
+                    </label>
+                    {s.sponsorLogo && (
+                      <button onClick={() => set("sponsorLogo", "")}
+                        className="flex h-9 items-center gap-1.5 rounded-xl bg-red-50 px-3 text-[12px] font-bold text-red-600 hover:bg-red-100">
+                        <X className="h-3.5 w-3.5" /> {t("admin.legalPhotoRemove")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <Field label={t("admin.sponsorName")} value={s.sponsorName} onChange={(v) => set("sponsorName", v)} />
+                <Area label={t("admin.sponsorText")} value={s.sponsorText} onChange={(v) => set("sponsorText", v)} rows={2} />
+                <Field label={t("admin.sponsorUrl")} value={s.sponsorUrl} onChange={(v) => set("sponsorUrl", v)} ltr />
+                <p className="text-[11px] font-medium leading-snug text-muted">{t("admin.sponsorHint")}</p>
+              </Card>
+
+              {/* pricing — subscription, ads, job applications. Rooms are part of the subscription. */}
+              <Card icon={<Crown className="h-4 w-4 text-amber-500" />} title={t("admin.pricingSection")}>
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceSubscription")} value={s.priceSubscription} onChange={(v) => set("priceSubscription", v)} />
+                  <PriceField label={t("admin.priceSub3m")} value={s.priceSub3m} onChange={(v) => set("priceSub3m", v)} />
+                  <PriceField label={t("admin.priceSub6m")} value={s.priceSub6m} onChange={(v) => set("priceSub6m", v)} />
+                  <PriceField label={t("admin.priceSub12m")} value={s.priceSub12m} onChange={(v) => set("priceSub12m", v)} />
+                </div>
+                <PriceField label={t("admin.priceAdBase")} value={s.priceAdBase} onChange={(v) => set("priceAdBase", v)} />
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceAdExtraCountry")} value={s.priceAdExtraCountry} onChange={(v) => set("priceAdExtraCountry", v)} />
+                  <PriceField label={t("admin.priceAdExtraDay")} value={s.priceAdExtraDay} onChange={(v) => set("priceAdExtraDay", v)} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceJobPost")} value={s.priceJobPost} onChange={(v) => set("priceJobPost", v)} />
+                  <PriceField label={t("admin.priceSeekerAd")} value={s.priceSeekerAd} onChange={(v) => set("priceSeekerAd", v)} />
+                </div>
+                <p className="text-[11px] font-medium leading-snug text-muted">{t("admin.pricingHint")}</p>
+              </Card>
+
+              <Card icon={<Info className="h-4 w-4 text-brand-600" />} title={t("admin.aboutSection")}>
+                <Area label={t("admin.aboutAr")} value={s.aboutAr} onChange={(v) => set("aboutAr", v)} />
+                <Area label={t("admin.aboutEn")} value={s.aboutEn} onChange={(v) => set("aboutEn", v)} />
+              </Card>
+              <Card icon={<MessageSquareText className="h-4 w-4 text-brand-600" />} title={t("admin.boxesSection")}>
+                <Area label={t("admin.complaintsInfo")} value={s.complaintsInfo} onChange={(v) => set("complaintsInfo", v)} rows={2} />
+                <Area label={t("admin.inquiriesInfo")} value={s.inquiriesInfo} onChange={(v) => set("inquiriesInfo", v)} rows={2} />
+              </Card>
+            </div>
+            <button onClick={save} disabled={busy}
+              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 text-[15px] font-extrabold text-white hover:bg-brand-700 disabled:opacity-40 active:scale-[0.99] lg:w-64">
+              <Save className="h-4 w-4" /> {t("admin.save")}
+            </button>
+          </>
+        )}
+      </main>
+
+      {toast && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+          className="pointer-events-none fixed bottom-8 left-1/2 z-30 -translate-x-1/2 rounded-full bg-emerald-600 px-5 py-2.5 text-[13.5px] font-bold text-white shadow-lg">
+          {toast}
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Filter by any country on earth: quick chips for the countries that already
+ * have members, and a dropdown carrying the rest of the world.
+ */
+function CountryFilter({ value, onPick, counts }: { value: string; onPick: (code: string) => void; counts: CountryStat[] }) {
+  const { t, locale } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const have = new Set(counts.map((c) => c.code));
+  const chipSelected = value === "all" || have.has(value);
+  const picked = !chipSelected ? getCountry(value) : null;
+
+  const s = q.trim().toLowerCase();
+  const rest = COUNTRIES.filter((c) => !have.has(c.code))
+    .filter((c) => !s || c.ar.includes(q.trim()) || c.en.toLowerCase().includes(s) || c.code.toLowerCase() === s);
+
+  function choose(code: string) { onPick(code); setOpen(false); setQ(""); }
+
+  return (
+    <div className="flex max-w-full flex-wrap items-center gap-2">
+      <button onClick={() => onPick("all")}
+        className={`rounded-full px-4 py-2 text-[12.5px] font-bold ${value === "all" ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+        🌍 {t("adm.allCountries")}
+      </button>
+      {counts.map((c) => {
+        const info = getCountry(c.code);
+        return (
+          <button key={c.code} onClick={() => onPick(c.code)}
+            className={`rounded-full px-4 py-2 text-[12.5px] font-bold ${value === c.code ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+            {info?.flag ?? "🏳"} {info?.[locale] ?? c.code} · {ld(c.users, locale)}{c.closed ? " 🔒" : ""}
+          </button>
+        );
+      })}
+
+      {/* the rest of the world — searchable */}
+      <div className="relative">
+        <button onClick={() => setOpen((o) => !o)}
+          className={`rounded-full px-4 py-2 text-[12.5px] font-bold ${!chipSelected ? "bg-[#131743] text-white" : "bg-white text-ink ring-1 ring-slate-200 hover:ring-slate-300"}`}>
+          {picked ? `${picked.flag} ${picked[locale]}` : `${t("adm.otherCountry")} ▾`}
+        </button>
+
+        {open && (
+          <>
+            {/* click-away layer */}
+            <button aria-hidden className="fixed inset-0 z-30 cursor-default" onClick={() => { setOpen(false); setQ(""); }} />
+            <div className="absolute end-0 top-11 z-40 w-72 overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-slate-200">
+              <div className="border-b border-slate-100 p-2.5">
+                <input
+                  autoFocus
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder={t("country.search")}
+                  className="h-10 w-full rounded-xl bg-slate-100 px-3.5 text-[13px] font-medium text-ink outline-none placeholder:text-muted"
+                />
+              </div>
+              <div className="max-h-72 overflow-y-auto p-1.5">
+                {rest.length === 0 ? (
+                  <p className="py-6 text-center text-[12.5px] font-bold text-muted">{t("discover.empty")}</p>
+                ) : (
+                  rest.map((c) => (
+                    <button key={c.code} onClick={() => choose(c.code)}
+                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-start hover:bg-slate-50">
+                      <span className="text-lg leading-none">{c.flag}</span>
+                      <span className="flex-1 text-[13px] font-bold text-ink">{c[locale]}</span>
+                      <span className="text-[10.5px] font-bold text-muted">{c.code}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The stat cards — one component, two homes: the live Stats tab and the Archive.
+ * monthMode leads with the month's new members instead of the all-time total.
+ */
+function StatsGrid({ stats, monthMode, onReports, onSuspended }: { stats: Stats; monthMode?: boolean; onReports: () => void; onSuspended?: () => void }) {
+  const { t, locale } = useI18n();
+  const money = (v: number) => `$${ld(Math.round(v), locale)}`;
+  const subs = stats.subscriptionRevenue, ads = stats.adRevenue, jobs = stats.jobRevenue;
+
+  return (
+    <>
+      <SectionTitle>{t("adm.secMembers")}</SectionTitle>
+      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        {monthMode ? (
+          <StatCard icon={<UserPlus className="h-5 w-5" />} tint="bg-brand-50 text-brand-600" label={t("adm.newUsers")} value={ld(stats.newUsers, locale)} sub={`${t("adm.users")}: ${ld(stats.totalUsers, locale)}`} />
+        ) : (
+          <StatCard icon={<Users className="h-5 w-5" />} tint="bg-brand-50 text-brand-600" label={t("adm.users")} value={ld(stats.totalUsers, locale)} />
+        )}
+        <StatCard icon={<Crown className="h-5 w-5" />} tint="bg-amber-50 text-amber-500" label={t("adm.premium")} value={ld(stats.premiumUsers, locale)} sub={`${t("adm.subRevenue")}: ${money(subs)}`} />
+        <StatCard icon={<Users className="h-5 w-5" />} tint="bg-emerald-50 text-emerald-600" label={t("adm.business")} value={ld(stats.businessUsers, locale)} />
+        <StatCard icon={<Ban className="h-5 w-5" />} tint="bg-red-50 text-red-500" label={t("adm.blocked")} value={ld(stats.blockedPeople, locale)} sub={`${t("adm.suspendedCount")}: ${ld(stats.suspendedUsers, locale)}`} />
+      </div>
+
+      <SectionTitle>{t("adm.secRevenue")}</SectionTitle>
+      <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard icon={<Megaphone className="h-5 w-5" />} tint="bg-violet-50 text-violet-600" label={t("adm.ads")} value={ld(stats.adsCount, locale)} sub={`${t("adm.advertisers")}: ${ld(stats.advertisers, locale)} · ${money(ads)}`} />
+        <StatCard icon={<Briefcase className="h-5 w-5" />} tint="bg-sky-50 text-sky-600" label={t("adm.jobs")} value={ld(stats.jobsCount, locale)} sub={`${t("adm.jobPosters")}: ${ld(stats.jobPosters, locale)} · ${money(jobs)}`} />
+        <StatCard icon={<Crown className="h-5 w-5" />} tint="bg-amber-50 text-amber-500" label={t("adm.subscriptions")} value={ld(stats.subscriptionCount, locale)} sub={money(subs)} />
+        <StatCard icon={<BarChart3 className="h-5 w-5" />} tint="bg-brand-50 text-brand-600" label={t("adm.totalRevenue")} value={money(subs + ads + jobs)} big />
+      </div>
+
+      {/* how the streams relate — each pair combined in one card */}
+      <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <PairCard title={t("adm.pairSubsAds")} total={money(subs + ads)}
+          a={{ label: t("adm.subscriptions"), value: money(subs) }} b={{ label: t("adm.ads"), value: money(ads) }} />
+        <PairCard title={t("adm.pairSubsJobs")} total={money(subs + jobs)}
+          a={{ label: t("adm.subscriptions"), value: money(subs) }} b={{ label: t("adm.jobs"), value: money(jobs) }} />
+        <PairCard title={t("adm.pairJobsAds")} total={money(jobs + ads)}
+          a={{ label: t("adm.jobs"), value: money(jobs) }} b={{ label: t("adm.ads"), value: money(ads) }} />
+      </div>
+
+      <SectionTitle>{t("adm.secSafety")}</SectionTitle>
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard icon={<Flag className="h-5 w-5" />} tint="bg-red-50 text-red-500" label={t("adm.reportsOpen")} value={ld(stats.reportsOpen, locale)} sub={`${t("adm.reportsTotal")}: ${ld(stats.reportsTotal, locale)}`} onClick={onReports} />
+        <StatCard icon={<ShieldAlert className="h-5 w-5" />} tint="bg-orange-50 text-orange-500" label={t("adm.suspendedCount")} value={ld(stats.suspendedUsers, locale)} onClick={onSuspended} />
+      </div>
+    </>
+  );
+}
+
+/** Two revenue streams side by side with their combined total on top. */
+function PairCard({ title, total, a, b }: { title: string; total: string; a: { label: string; value: string }; b: { label: string; value: string } }) {
+  return (
+    <div className="rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+      <p className="text-[12px] font-extrabold uppercase tracking-wider text-muted">{title}</p>
+      <p className="mt-1 text-[24px] font-extrabold text-ink">{total}</p>
+      <div className="mt-3 flex items-center gap-2">
+        <div className="flex-1 rounded-2xl bg-slate-50 p-2.5 text-center">
+          <p className="text-[11px] font-bold text-muted">{a.label}</p>
+          <p className="text-[14px] font-extrabold text-ink">{a.value}</p>
+        </div>
+        <span className="text-[14px] font-extrabold text-muted">+</span>
+        <div className="flex-1 rounded-2xl bg-slate-50 p-2.5 text-center">
+          <p className="text-[11px] font-bold text-muted">{b.label}</p>
+          <p className="text-[14px] font-extrabold text-ink">{b.value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <p className="mb-3 text-[12px] font-extrabold uppercase tracking-wider text-muted">{children}</p>;
+}
+
+function StatCard({ icon, tint, label, value, sub, onClick, big }: { icon: React.ReactNode; tint: string; label: string; value: string; sub?: string; onClick?: () => void; big?: boolean }) {
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag onClick={onClick} className={`rounded-3xl bg-white p-5 text-start ring-1 ring-slate-200 transition-shadow hover:shadow-md ${onClick ? "active:scale-[0.99]" : ""}`}>
+      <span className={`mb-3 grid h-10 w-10 place-items-center rounded-2xl ${tint}`}>{icon}</span>
+      <p className={`font-extrabold leading-tight text-ink ${big ? "text-[26px]" : "text-[24px]"}`}>{value}</p>
+      <p className="mt-0.5 text-[12.5px] font-bold text-muted">{label}</p>
+      {sub && <p className="mt-1 text-[11.5px] font-medium text-muted">{sub}</p>}
+    </Tag>
+  );
+}
+
+function Card({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+      <p className="mb-3 flex items-center gap-1.5 text-[14px] font-extrabold text-ink">{icon} {title}</p>
+      <div className="flex flex-col gap-3">{children}</div>
+    </div>
+  );
+}
+
+/** A USD amount — number input with a $ sign, zero allowed (= free). */
+function PriceField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] font-bold text-muted">{label}</span>
+      <div className="flex items-center gap-2 rounded-2xl border-2 border-slate-200 bg-white px-3.5 focus-within:border-brand-500" dir="ltr">
+        <span className="text-[14px] font-extrabold text-muted">$</span>
+        <input
+          type="number" min={0} step={0.5} inputMode="decimal"
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) => onChange(Math.max(0, parseFloat(e.target.value) || 0))}
+          className="h-11 w-full bg-transparent text-[14px] font-medium text-ink outline-none"
+        />
+      </div>
+    </label>
+  );
+}
+
+function Field({ label, value, onChange, ltr }: { label: string; value: string; onChange: (v: string) => void; ltr?: boolean }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] font-bold text-muted">{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} dir={ltr ? "ltr" : undefined}
+        className="h-11 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500" />
+    </label>
+  );
+}
+
+function Area({ label, value, onChange, rows = 3 }: { label: string; value: string; onChange: (v: string) => void; rows?: number }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] font-bold text-muted">{label}</span>
+      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={rows}
+        className="w-full resize-none rounded-2xl border-2 border-slate-200 bg-white p-3.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500" />
+    </label>
+  );
+}

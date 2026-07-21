@@ -1,0 +1,588 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String  @id @default(cuid())
+  // Contact: user registers with EITHER an email OR a phone number.
+  email         String? @unique
+  phone         String? @unique
+  contactMethod String  @default("email") // email | phone
+  passwordHash  String?
+  displayName   String // public name shown in the app
+  realName      String? // personal real name / business owner name
+  avatarUrl     String? // profile photo (self-hosted upload)
+  nationality   String? // country code of nationality
+  gender        String? // male | female
+  // Business / discovery profile
+  category      String? // business catKey, e.g. cat.sweets
+  bio           String? // short public description
+  rating        Float? // average rating
+  reviews       Int     @default(0)
+  online        Boolean @default(false)
+  profileViews  Int     @default(0) // for top-viewed ranking
+  hasStory      Boolean @default(false)
+  accountType   String  @default("personal") // personal | business
+  country       String?
+  browseCountries String @default("") // CSV of countries I want to SEE people from ("" = all)
+  locale        String  @default("ar")
+  // Moderation — set from the admin dashboard when a report is actioned
+  suspendedUntil DateTime? // account locked until this moment (null = not suspended)
+  suspendReason  String?
+
+  // Personal-only
+  dateOfBirth DateTime?
+  // Business-only
+  address     String?
+
+  // Privacy / preferences
+  visibility     String  @default("public") // public | hidden  (معلن / مخفي)
+  showDistance   Boolean @default(true) // إظهار / إخفاء المسافة
+  allowSaveMedia Boolean @default(false) // السماح بحفظ الصور والفيديو
+  deleteMediaAfterView Boolean @default(false) // مسح الصور/الفيديو بعد المشاهدة
+  showAddress    Boolean @default(true) // business: إظهار / إخفاء العنوان
+  // "لا أستقبل رسائل" — when true, only people on the allow-list can message me
+  dmClosed       Boolean @default(false)
+  hideTop        Boolean @default(false) // parental lock: hides the "most viewed" doorway
+  // admin-granted freebies: these users post without being charged
+  freeAds        Boolean @default(false)
+  freeJobPost    Boolean @default(false)
+  freeSeekerAd   Boolean @default(false)
+  // subscription auto-renewal: on by default, cancelling turns it off (premium
+  // then runs to its end date and lapses). renewMonths = which bundle to rebill.
+  autoRenew        Boolean @default(true)
+  renewMonths      Int     @default(1)
+  subRenewNotified Boolean @default(false) // the 3-days-before notice, sent once per cycle
+  // sponsor & branches — all admin-managed:
+  promoVideoUrl String? // the video pinned to the top of this profile
+  promoLinkUrl  String? // the link shown right under the video
+  parentId      String? // this account is a branch of another (sponsor or any business)
+  parent        User?   @relation("Branches", fields: [parentId], references: [id], onDelete: SetNull)
+  branches      User[]  @relation("Branches")
+  grantReqsBy   AdminGrantRequest[] @relation("GrantReqBy")
+  grantReqsFor  AdminGrantRequest[] @relation("GrantReqFor")
+
+  // Premium (subscription) — unlocked by the $30 plan
+  isPremium     Boolean   @default(false)
+  premiumUntil  DateTime?
+  textColor     String? // custom name/text colour (premium)
+  shareLocation Boolean   @default(false) // location button on/off
+  locationLat   Float?
+  locationLng   Float?
+  social1       String?
+  social2       String?
+  social3       String?
+
+  isAdmin    Boolean  @default(false) // can open the admin dashboard
+  isOwner    Boolean  @default(false) // THE owner — appoints admins, confirms their grants
+  isVerified Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  otps          OtpCode[]
+  refreshTokens RefreshToken[]
+  conversations Conversation[]
+  follows       Follow[]
+  ads           Ad[]
+  notifications Notification[]
+  subscriptions Subscription[]
+  meetings             Meeting[]
+  meetingParticipants  MeetingParticipant[]
+  blocks        Block[]        @relation("BlocksMade")
+  reports       Report[]       @relation("ReportsMade")
+  stories       Story[]
+  storyViews    StoryView[]
+  posts         Post[]
+  postLikes     PostLike[]
+  postComments  PostComment[]
+  locationHides LocationHide[] @relation("LocationHides")
+  dmAllows      DmAllow[]      @relation("DmAllows")
+  joinRequests  MeetingJoinRequest[]
+  postedJobs    Job[]
+  jobSeeker     JobSeeker?
+  applications  JobApplication[]
+  tickets       SupportTicket[]
+  pushSubs      PushSubscription[]
+}
+
+model OtpCode {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String
+  purpose    String    @default("verify_contact") // verify_contact | reset_password
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  peerId     String // business / peer identifier the user is chatting with
+  lastReadAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  messages   Message[]
+
+  @@unique([userId, peerId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  fromMe         Boolean      @default(true) // true = sent by the user, false = peer
+  kind           String       @default("text") // text | image | voice | video | location
+  body           String
+  mediaUrl       String? // self-hosted media (image/video/voice) URL
+  mirrorId       String?
+  deletedAt      DateTime?
+  viewOnce       Boolean      @default(false)
+  viewedAt       DateTime?
+  allowSave      Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+model Follow {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String // business / peer being followed
+  createdAt DateTime @default(now())
+
+  @@unique([userId, targetId])
+  @@index([userId])
+  @@index([targetId])
+}
+
+model Ad {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  caption      String?
+  country      String
+  durationDays Int
+  price        Float
+  mediaName    String?
+  mediaUrl     String? // self-hosted upload path, e.g. /uploads/<file>
+  status       String   @default("pending") // pending | active | expired | rejected
+  views        Int      @default(0)
+  endNotified  Boolean  @default(false) // "your ad ends in 3 days" sent once
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String // welcome | ad_review | new_message | new_follower | post_like | post_comment | post_repost | meeting_invite
+  data      String? // free text shown in the notification (message preview, comment, caption…)
+  actorId   String? // who did it (null for system notifications)
+  targetId  String? // what it points at (postId / meetingId / peer userId)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String // who GETS the subscription
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gifterId  String? // who PAID for it, when someone gifted it
+  plan      String   @default("premium")
+  amount    Float
+  currency  String   @default("USD")
+  status    String   @default("active") // active | expired
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+}
+
+// ===== Meetings (audio rooms) — paid per hour, max 20 participants.
+// NOTE: real-time voice needs a media server (go-live item). Models are ready.
+model Meeting {
+  id           String   @id @default(cuid())
+  hostId       String
+  host         User     @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  title        String
+  durationMin  Int      @default(60) // billed per hour
+  pricePerHour Float    @default(5)
+  maxSeats     Int      @default(20) // hard cap 20
+  allowAudio   Boolean  @default(true)
+  allowText    Boolean  @default(true)
+  allowVideo   Boolean  @default(false)
+  joinCode     String  @default("") // "" = legacy room created before codes existed
+  followersOnly Boolean @default(true)
+  // public: listed to everyone · announced: friends see the title, entry only after
+  // host approval · hidden: nobody even knows the room exists
+  privacy      String   @default("public")
+  allowRecording Boolean @default(true)
+  status       String   @default("live")
+  isProfileLive Boolean @default(false) // a premium member's 45-min "live from my profile" room
+  createdAt    DateTime @default(now())
+  endsAt       DateTime?
+
+  participants MeetingParticipant[]
+  joinRequests MeetingJoinRequest[]
+
+  @@index([hostId])
+  @@index([status])
+}
+
+// Someone asked the host to let them in (instead of typing the code).
+model MeetingJoinRequest {
+  id        String   @id @default(cuid())
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status    String   @default("pending") // pending | approved | denied
+  createdAt DateTime @default(now())
+
+  @@unique([meetingId, userId])
+  @@index([meetingId, status])
+}
+
+model MeetingParticipant {
+  id         String   @id @default(cuid())
+  meetingId  String
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       String   @default("guest") // host | guest
+  audioState String   @default("muted") // talking | muted | requesting
+  canAudio   Boolean  @default(false)
+  canText    Boolean  @default(true)
+  canVideo   Boolean  @default(false)
+  canScreen  Boolean  @default(false)
+  onStage    Boolean  @default(false)
+  wants      String?
+  blocked    Boolean  @default(false)
+  kicked     Boolean  @default(false)
+  joinedAt   DateTime @default(now())
+
+  @@unique([meetingId, userId])
+  @@index([meetingId])
+}
+
+model Block {
+  id        String   @id @default(cuid())
+  userId    String // the blocker
+  user      User     @relation("BlocksMade", fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String // the blocked peer
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([userId, targetId])
+  @@index([userId])
+  @@index([targetId])
+}
+
+model Report {
+  id        String   @id @default(cuid())
+  userId    String // the reporter
+  user      User     @relation("ReportsMade", fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String // reported user / content id
+  kind      String   @default("user") // user | ad | message | story
+  reason    String?
+  status    String   @default("open") // open | reviewed | actioned
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([targetId])
+}
+
+
+model Story {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String      @default("image") // image | video
+  mediaUrl  String
+  caption   String?
+  createdAt DateTime    @default(now())
+  expiresAt DateTime // 24h after createdAt
+  views     StoryView[]
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model StoryView {
+  id        String   @id @default(cuid())
+  storyId   String
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  viewerId  String
+  viewer    User     @relation(fields: [viewerId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([storyId, viewerId])
+  @@index([storyId])
+}
+
+
+// A company's job opening.
+model Job {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     User     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  imageUrl    String? // optional ad image
+  companyName String? // shown on the card (defaults to the account name)
+  title       String // the role
+  catKey      String?
+  typeKey     String   @default("full") // full | part | remote
+  degree      String? // required degree
+  experience  String? // required experience
+  salary      String?
+  nationality String? // nationality they're looking for
+  gender      String? // male | female | any
+  country     String? // where the employee should be located (country code)
+  location    String? // city / area
+  birthFrom   Int? // birth-year range they accept
+  birthTo     Int?
+  status      String   @default("open") // open | closed | expired
+  cost        Float    @default(0) // everything ever paid for this ad (posting + renewals)
+  expiresAt   DateTime? // job ads live for 30 days, then renew or stop
+  renewNotified Boolean @default(false) // reminder sent once per expiry
+  endNotified Boolean  @default(false) // "ends in 3 days" warning sent once
+  createdAt   DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([companyId])
+  applications JobApplication[]
+}
+
+// A job seeker's profile / CV.
+model JobApplication {
+  id        String   @id @default(cuid())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note      String?
+  cvUrl     String?
+  cost      Float    @default(0) // what applying cost at the time — the jobs revenue stream
+  status    String   @default("sent") // sent | seen | accepted | rejected
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, userId])
+  @@index([jobId])
+}
+
+model JobSeeker {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  imageUrl    String? // optional photo
+  name        String
+  birthDate   String? // yyyy-mm-dd
+  degree      String?
+  nationality String?
+  gender      String // male | female
+  experience  String?
+  title       String? // the role they want
+  countries   String // CSV of country codes they'd work in
+  cvUrl       String? // optional uploaded CV
+  cost        Float    @default(0) // everything ever paid for this listing (posting + renewals)
+  expiresAt   DateTime? // seeker ads live for 30 days, then renew or stop
+  renewNotified Boolean @default(false)
+  endNotified Boolean  @default(false) // "ends in 3 days" warning sent once
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String   @default("image") // image | video (reel)
+  mediaUrl  String
+  caption   String?
+  views     Int      @default(0)
+
+  // Sharing rules chosen by the author when publishing
+  allowRepost  Boolean @default(true) // السماح بإعادة النشر
+  allowSave    Boolean @default(true) // السماح بالحفظ
+  allowComment Boolean @default(true) // السماح بالتعليق
+
+  // Reposts point back at the original post
+  repostOfId String?
+  repostOf   Post?   @relation("Reposts", fields: [repostOfId], references: [id], onDelete: SetNull)
+  reposts    Post[]  @relation("Reposts")
+
+  likes    PostLike[]
+  comments PostComment[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+  @@index([postId])
+}
+
+model PostComment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([createdAt])
+}
+
+model LocationHide {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("LocationHides", fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, targetId])
+  @@index([targetId])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+
+/// Everything the admin can edit from the dashboard: the app's public contact details.
+model AppSettings {
+  id             String   @id @default("app") // single row
+  adminEmail     String   @default("")
+  supportPhone   String   @default("")
+  whatsapp       String   @default("")
+  aboutAr        String   @default("")
+  aboutEn        String   @default("")
+  complaintsInfo String   @default("") // how complaints are handled
+  inquiriesInfo  String   @default("")
+  legalRepName   String   @default("")
+  legalRepEmail  String   @default("")
+  legalRepPhone  String   @default("")
+  legalRepAvatar String   @default("") // the lawyer's photo (data URL, like member avatars)
+  legalRepUserId String   @default("") // his in-app account, when he has one — members can DM him
+  address        String   @default("")
+  // ISO codes the admin has closed, CSV ("KW,IQ"). A closed country disappears
+  // from every picker and its members are locked out until it reopens.
+  closedCountries String  @default("")
+  // The official sponsor — shown on the white sponsorship page. All empty = the
+  // page is closed completely.
+  sponsorName String @default("")
+  sponsorLogo String @default("") // data URL, like avatars
+  sponsorText String @default("")
+  sponsorUrl  String @default("")
+  sponsorUserId String @default("") // the sponsor's in-app account, when they have one
+  // Pricing — all USD, editable from the dashboard. Rooms carry no price of
+  // their own: they are part of the Premium subscription.
+  priceSubscription Float @default(4.99) // Premium, 1 month
+  priceSub3m        Float @default(13.99) // 3-month bundle
+  priceSub6m        Float @default(26.99) // 6-month bundle
+  priceSub12m       Float @default(53.99) // 1-year bundle
+  // Ads: the base price buys 1 country + 1 day; each extra country/day adds its increment.
+  priceAdBase         Float @default(49.99)
+  priceAdExtraCountry Float @default(15)
+  priceAdExtraDay     Float @default(11)
+  priceJobApply     Float @default(0) // fee to apply for a job (0 = free, per the client)
+  priceJobPost      Float @default(1.99) // company job ad, per month
+  priceSeekerAd     Float @default(0.99) // individual "looking for work" ad, per month
+  updatedAt      DateTime @updatedAt
+}
+
+/// A sub-admin wants to gift premium — the owner says yes or no from the dashboard.
+model AdminGrantRequest {
+  id          String    @id @default(cuid())
+  requesterId String // the admin who asked
+  requester   User      @relation("GrantReqBy", fields: [requesterId], references: [id], onDelete: Cascade)
+  targetId    String // who the gift is for
+  target      User      @relation("GrantReqFor", fields: [targetId], references: [id], onDelete: Cascade)
+  months      Int? // a bundle…
+  until       DateTime? // …or an exact end date
+  status      String    @default("pending") // pending | approved | denied
+  createdAt   DateTime  @default(now())
+
+  @@index([status])
+}
+
+/// A complaint or an inquiry sent to the admin — the dashboard's inbox.
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  kind      String   @default("inquiry") // complaint | inquiry | legal
+  subject   String   @default("")
+  body      String
+  contact   String   @default("") // how to reach them back
+  status    String   @default("open") // open | seen | closed
+  createdAt DateTime @default(now())
+
+  @@index([kind])
+  @@index([status])
+}
+
+
+/// People I allow to message me while my inbox is closed.
+model DmAllow {
+  id        String   @id @default(cuid())
+  userId    String   // me (the one with the closed inbox)
+  user      User     @relation("DmAllows", fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String   // the person I let through
+  createdAt DateTime @default(now())
+
+  @@unique([userId, targetId])
+  @@index([userId])
+}

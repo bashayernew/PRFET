@@ -1,0 +1,9 @@
+# Auto-HTTPS for your domain. Replace with your real domain via the $DOMAIN env.
+{$DOMAIN} {
+	reverse_proxy app:3000
+}
+
+# LiveKit signaling (websocket) on a subdomain — point livekit.<domain> DNS at the server too.
+livekit.{$DOMAIN} {
+	reverse_proxy host.docker.internal:7880
+}

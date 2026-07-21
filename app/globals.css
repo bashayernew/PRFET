@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+/* ---- Herot design tokens ---- */
+@theme {
+  /* Herot brand — deep navy / indigo (Nexa-style) */
+  --color-brand-50: #eef0fb;
+  --color-brand-100: #d9ddf7;
+  --color-brand-200: #b6bdf0;
+  --color-brand-300: #8c95e6;
+  --color-brand-400: #5e66d6;
+  --color-brand-500: #3a41c6;
+  --color-brand-600: #282e9e;
+  --color-brand-700: #1e2480;
+  --color-brand-800: #161a5f;
+  --color-brand-900: #0d1142;
+
+  /* accent — periwinkle violet */
+  --color-accent-400: #8b90f2;
+  --color-accent-500: #6c72e0;
+  --color-accent-600: #565cd0;
+
+  --color-ink: #141a3a;
+  --color-muted: #6b7194;
+  --color-gold-400: #fbbf24;
+  --color-pos: #1faa6e;
+}
+
+/* subtle dotted texture for the hero */
+.hero-dots {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.13) 1px, transparent 1.4px);
+  background-size: 18px 18px;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #0d1142;
+}
+
+/* hide scrollbar on the mobile shell while keeping scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.animate-floaty { animation: floaty 5s ease-in-out infinite; }
+.animate-floaty-slow { animation: floaty 7s ease-in-out infinite; }
+
+
+/* ===== Premium (VIP): a gold header that catches the light ===== */
+.vip-header {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(140% 120% at 15% -10%, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 45%),
+    linear-gradient(155deg, #8a6a1f 0%, #c9a227 26%, #f3d97f 48%, #c9a227 72%, #7d5f1b 100%);
+  box-shadow: inset 0 -30px 40px -30px rgba(60, 40, 0, 0.55);
+}
+/* the sweep of light */
+.vip-header::after {
+  content: "";
+  position: absolute;
+  inset: -40% -60%;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 42%,
+    rgba(255, 255, 255, 0.42) 50%,
+    rgba(255, 255, 255, 0) 58%
+  );
+  transform: translateX(-60%);
+  animation: vip-shine 4.5s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes vip-shine {
+  0%   { transform: translateX(-60%); }
+  60%  { transform: translateX(60%); }
+  100% { transform: translateX(60%); }
+}
+.vip-header > * { position: relative; z-index: 1; }
+
+/* text stays legible on gold, whatever colour the member picked */
+.vip-header h1,
+.vip-header p,
+.vip-header span { text-shadow: 0 1px 2px rgba(50, 32, 0, 0.35); }
+
+/* chips + stat panel: dark glass instead of washed-out white */
+.vip-chip { background: rgba(40, 26, 0, 0.28); color: #fff; }
+
+/* ===== Admin: the red identity — same shine, crimson coat ===== */
+.admin-header {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(140% 120% at 15% -10%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0) 45%),
+    linear-gradient(155deg, #5f1013 0%, #a31621 26%, #ef4444 48%, #a31621 72%, #4c0d10 100%);
+  box-shadow: inset 0 -30px 40px -30px rgba(60, 0, 0, 0.55);
+}
+.admin-header::after {
+  content: "";
+  position: absolute;
+  inset: -40% -60%;
+  background: linear-gradient(
+    115deg,
+    rgba(255, 255, 255, 0) 42%,
+    rgba(255, 255, 255, 0.32) 50%,
+    rgba(255, 255, 255, 0) 58%
+  );
+  transform: translateX(-60%);
+  animation: vip-shine 4.5s ease-in-out infinite;
+  pointer-events: none;
+}
+.admin-header > * { position: relative; z-index: 1; }
+.admin-header h1,
+.admin-header p,
+.admin-header span { text-shadow: 0 1px 2px rgba(60, 0, 0, 0.4); }
+.vip-panel { background: rgba(40, 26, 0, 0.22); }
+
+/* buttons that belong on gold */
+.vip-btn-dark { background: #17193f; color: #f3d97f; }
+.vip-btn-gold { background: linear-gradient(150deg, #f3d97f 0%, #c9a227 100%); color: #3a2c00; }

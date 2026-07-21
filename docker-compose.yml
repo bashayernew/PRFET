@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: herot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: herot
+      POSTGRES_PASSWORD: herot_dev_password
+      POSTGRES_DB: herot
+    ports:
+      - "5433:5432"
+    volumes:
+      - herot_pgdata:/var/lib/postgresql/data
+
+volumes:
+  herot_pgdata:

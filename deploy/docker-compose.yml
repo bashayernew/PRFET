@@ -1,0 +1,61 @@
+# Herot — single-VPS stack: app + Postgres + Caddy(TLS) + coturn(calls) + LiveKit(meetings).
+# Put this file + Caddyfile + livekit.yaml + .env on the server, then: docker compose up -d --build
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [db]
+    volumes:
+      - uploads:/app/public/uploads     # uploaded media survives restarts
+    expose: ["3000"]
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: herot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: herot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+
+  # 1:1 voice/video calls need a TURN server. Host networking = it can use the UDP range.
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+    command: >
+      -n --realm=${DOMAIN} --server-name=${DOMAIN}
+      --listening-port=3478 --min-port=49160 --max-port=49200
+      --use-auth-secret --static-auth-secret=${TURN_SECRET}
+      --no-cli --no-tls --no-dtls --log-file=stdout
+
+  # Group meeting audio (up to 20). Host networking for its media UDP ports.
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    network_mode: host
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+
+volumes:
+  pgdata: {}
+  uploads: {}
+  caddy_data: {}
+  caddy_config: {}

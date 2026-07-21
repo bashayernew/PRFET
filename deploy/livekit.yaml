@@ -1,0 +1,10 @@
+# LiveKit server config. Set keys to match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: true
+keys:
+  # key: secret  (must match the app's LIVEKIT_API_KEY / LIVEKIT_API_SECRET)
+  herotkey: 3da71995a795df0fc217f8a3ae689975186a25bc3451a426b6060c8089d359e7

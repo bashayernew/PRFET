@@ -1,0 +1,48 @@
+{
+  "name": "herot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js",
+    "dev:next": "next dev",
+    "build": "prisma generate && next build",
+    "start": "node server.js",
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:seed": "node prisma/seed.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1",
+    "bcryptjs": "^2.4.3",
+    "framer-motion": "^11.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.453.0",
+    "next": "15.1.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.24.1",
+    "web-push": "^3.6.7",
+    "livekit-server-sdk": "^2.6.1",
+    "livekit-client": "^2.5.0",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor-community/privacy-screen": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "prisma": "^6.2.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/ios": "^6.1.2"
+  }
+}
