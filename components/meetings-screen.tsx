@@ -83,9 +83,6 @@ export default function MeetingsScreen() {
                   <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-ink/70">
                     <Users className="h-3 w-3" /> {ld(r.taken, locale)}/{ld(r.seats, locale)}
                   </span>
-                  <span className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
-                    ${ld(r.pricePerHour, locale)}/{t("meet.hour")}
-                  </span>
                   {!r.mine && (
                     <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">
                       <Lock className="h-3 w-3" /> {t("meet.codeNeeded")}

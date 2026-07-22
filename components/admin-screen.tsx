@@ -79,7 +79,12 @@ type Rep = {
   reporter: RepUser | null; target: RepUser | null; mediaUrl: string | null; contentText: string | null;
 };
 
-type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "page";
+type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "invoices" | "page";
+
+type Invoice = {
+  id: string; number: string; customerName: string; kind: string;
+  description: string; amount: number; currency: string; createdAt: string;
+};
 
 type PromoUser = {
   id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null;
@@ -123,6 +128,7 @@ export default function AdminScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [countries, setCountries] = useState<CountryStat[]>([]);
   const [selCountry, setSelCountry] = useState("all");
+  const [countryQ, setCountryQ] = useState(""); // search box on the Countries tab
   const [period, setPeriod] = useState<"month" | "all">("month"); // stats default to the running month
   const [months, setMonths] = useState<string[]>([]);
 
@@ -156,6 +162,14 @@ export default function AdminScreen() {
   const [brQ, setBrQ] = useState("");
   const [brResults, setBrResults] = useState<GrantUser[]>([]);
   const [busyPromo, setBusyPromo] = useState(false);
+
+  // invoices
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invTotal, setInvTotal] = useState(0);
+  const [invQ, setInvQ] = useState("");
+  const [invFrom, setInvFrom] = useState("");
+  const [invTo, setInvTo] = useState("");
+  const [invView, setInvView] = useState<Invoice | null>(null);
 
   const [s, setS] = useState<Settings>(EMPTY);
   const [busy, setBusy] = useState(false);
@@ -234,6 +248,12 @@ export default function AdminScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, router, loadStats, loadArchive, loadReports, loadSponsor]);
 
+  // load the invoice list the first time that tab opens
+  useEffect(() => {
+    if (tab === "invoices" && invoices.length === 0) loadInvoices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   function pickCountry(code: string) { setSelCountry(code); loadStats(code, period); }
   function pickPeriod(p: "month" | "all") { setPeriod(p); loadStats(selCountry, p); }
   function pickArchMonth(m: string) { setArchMonth(m); loadArchive(m, archCountry); }
@@ -273,6 +293,16 @@ export default function AdminScreen() {
 
   function pickRepCountry(code: string) { setRepCountry(code); loadReports(code, search); }
   function runSearch() { loadReports(repCountry, search); }
+
+  // ----- invoices -----
+  async function loadInvoices() {
+    const p = new URLSearchParams();
+    if (invQ.trim()) p.set("q", invQ.trim());
+    if (invFrom) p.set("from", invFrom);
+    if (invTo) p.set("to", invTo);
+    const res = await apiGet<{ total: number; invoices: Invoice[] }>(`/api/admin/invoices?${p.toString()}`, getAccessToken() || undefined);
+    if (res.ok && res.data) { setInvoices(res.data.invoices); setInvTotal(res.data.total); }
+  }
 
   // ----- grants -----
   async function searchGrantUsers() {
@@ -382,6 +412,7 @@ export default function AdminScreen() {
     { k: "countries", icon: <Globe2 className="h-[18px] w-[18px]" />, label: t("adm.tabCountries"), badge: closedSet.size },
     { k: "grants", icon: <Gift className="h-[18px] w-[18px]" />, label: t("adm.tabGrants") },
     { k: "sponsor", icon: <Crown className="h-[18px] w-[18px]" />, label: t("adm.tabSponsor") },
+    { k: "invoices", icon: <FileText className="h-[18px] w-[18px]" />, label: t("adm.tabInvoices") },
     { k: "page", icon: <FileText className="h-[18px] w-[18px]" />, label: t("adm.tabPage") },
   ];
 
@@ -477,9 +508,17 @@ export default function AdminScreen() {
         {tab === "countries" && (
           <>
             <h1 className="mb-2 text-[22px] font-extrabold text-ink">{t("adm.tabCountries")}</h1>
-            <p className="mb-6 max-w-2xl text-[12.5px] font-medium leading-relaxed text-muted">{t("adm.countriesHint")}</p>
+            <p className="mb-4 max-w-2xl text-[12.5px] font-medium leading-relaxed text-muted">{t("adm.countriesHint")}</p>
+            <div className="mb-5 flex h-11 max-w-md items-center gap-2 rounded-2xl bg-white px-3.5 ring-1 ring-slate-200 focus-within:ring-brand-400">
+              <Search className="h-4 w-4 shrink-0 text-muted" />
+              <input value={countryQ} onChange={(e) => setCountryQ(e.target.value)} placeholder={t("country.search")}
+                className="h-full flex-1 bg-transparent text-[13.5px] font-medium text-ink outline-none placeholder:text-muted" />
+            </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {COUNTRIES.map((c) => {
+              {COUNTRIES.filter((c) => {
+                const q = countryQ.trim().toLowerCase();
+                return !q || c.ar.includes(countryQ.trim()) || c.en.toLowerCase().includes(q) || c.code.toLowerCase() === q;
+              }).map((c) => {
                 const isClosed = closedSet.has(c.code);
                 const users = countries.find((x) => x.code === c.code)?.users ?? 0;
                 return (
@@ -643,6 +682,94 @@ export default function AdminScreen() {
                       </span>
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ---------- INVOICES ---------- */}
+        {tab === "invoices" && (
+          <>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h1 className="text-[22px] font-extrabold text-ink">{t("adm.tabInvoices")}</h1>
+              <span className="rounded-2xl bg-emerald-50 px-4 py-2 text-[13px] font-extrabold text-emerald-700">
+                {t("adm.invTotal")}: ${ld(Math.round(invTotal), locale)} · {ld(invoices.length, locale)}
+              </span>
+            </div>
+
+            {/* search by name/number + date range */}
+            <div className="mb-5 flex flex-wrap items-end gap-2">
+              <div className="flex h-11 min-w-[220px] flex-1 items-center gap-2 rounded-2xl bg-white px-3.5 ring-1 ring-slate-200 focus-within:ring-brand-400">
+                <Search className="h-4 w-4 shrink-0 text-muted" />
+                <input value={invQ} onChange={(e) => setInvQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") loadInvoices(); }}
+                  placeholder={t("adm.invSearchPh")} className="h-full flex-1 bg-transparent text-[13.5px] font-medium text-ink outline-none placeholder:text-muted" />
+              </div>
+              <input type="date" value={invFrom} onChange={(e) => setInvFrom(e.target.value)} dir="ltr"
+                className="h-11 rounded-2xl border-2 border-slate-200 bg-white px-3 text-[13px] font-medium text-ink outline-none focus:border-brand-500" />
+              <input type="date" value={invTo} onChange={(e) => setInvTo(e.target.value)} dir="ltr"
+                className="h-11 rounded-2xl border-2 border-slate-200 bg-white px-3 text-[13px] font-medium text-ink outline-none focus:border-brand-500" />
+              <button onClick={loadInvoices} className="h-11 rounded-2xl bg-[#131743] px-5 text-[13px] font-bold text-white active:scale-95">{t("discover.search")}</button>
+            </div>
+
+            {invoices.length === 0 ? (
+              <div className="grid place-items-center rounded-3xl bg-white py-16 ring-1 ring-slate-200">
+                <FileText className="h-9 w-9 text-slate-300" />
+                <p className="mt-2 text-[14px] font-bold text-muted">{t("adm.invEmpty")}</p>
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl ring-1 ring-slate-200">
+                {invoices.map((inv, i) => (
+                  <button key={inv.id} onClick={() => setInvView(inv)}
+                    className={`flex w-full items-center gap-3 px-4 py-3 text-start hover:bg-slate-50 ${i ? "border-t border-slate-100" : ""}`}>
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600"><FileText className="h-4 w-4" /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-extrabold text-ink">{inv.customerName || "—"}</span>
+                      <span className="block truncate text-[11.5px] font-medium text-muted" dir="ltr">{inv.number} · {inv.description}</span>
+                    </span>
+                    <span className="shrink-0 text-end">
+                      <span className="block text-[13.5px] font-extrabold text-emerald-700" dir="ltr">${inv.amount}</span>
+                      <span className="block text-[11px] font-medium text-muted">{new Date(inv.createdAt).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* the simple invoice view */}
+            {invView && (
+              <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onClick={() => setInvView(null)}>
+                <div dir="ltr" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/logo.png" alt="PRFET" className="h-8 w-auto object-contain" />
+                    <div className="text-end">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Invoice</p>
+                      <p className="text-[13px] font-extrabold text-ink">{invView.number}</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-between py-4 text-[12.5px]">
+                    <div>
+                      <p className="font-bold text-muted">Billed to</p>
+                      <p className="font-extrabold text-ink">{invView.customerName || "—"}</p>
+                    </div>
+                    <div className="text-end">
+                      <p className="font-bold text-muted">Date</p>
+                      <p className="font-extrabold text-ink">{new Date(invView.createdAt).toLocaleDateString("en-GB")}</p>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="flex items-center justify-between text-[13px]">
+                      <span className="font-bold text-ink">{invView.description}</span>
+                      <span className="font-extrabold text-ink">${invView.amount}</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3 text-[15px]">
+                      <span className="font-extrabold text-ink">Total</span>
+                      <span className="font-extrabold text-emerald-700">${invView.amount} {invView.currency}</span>
+                    </div>
+                  </div>
+                  <p className="mt-4 text-center text-[11px] font-medium text-muted">PRFET · Thank you</p>
+                  <button onClick={() => setInvView(null)} className="mt-4 h-11 w-full rounded-2xl bg-[#131743] text-[13.5px] font-bold text-white active:scale-[0.99]">{t("close")}</button>
                 </div>
               </div>
             )}

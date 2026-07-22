@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken, publicUser } from "@/lib/auth";
 import { getPrices, subPrice } from "@/lib/pricing";
+import { createInvoice, sendSubscriptionWelcome } from "@/lib/invoice";
 
 const DAYS = 30;
 const ALLOWED_MONTHS = [1, 3, 6, 12];
@@ -35,6 +36,10 @@ export async function POST(req: Request) {
     // buying (re)arms auto-renewal with this bundle as the one to rebill
     data: { isPremium: true, premiumUntil: expiresAt, autoRenew: true, renewMonths: months, subRenewNotified: false },
   });
+
+  // invoice + the owner's welcome message
+  await createInvoice({ userId: payload.sub, kind: "subscription", description: `Premium — ${months} month(s)`, amount: price });
+  await sendSubscriptionWelcome(payload.sub);
 
   return NextResponse.json({ ok: true, user: publicUser(user) });
 }

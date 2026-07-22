@@ -3,14 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { MapPin, Ruler, Check, Crown, Palette, Link2, Camera, Settings, Pencil, Plus } from "lucide-react";
+import { MapPin, Crown, Link2, Camera, Settings, Pencil, Plus } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { apiGet, apiPatch, apiPost, apiUpload, getAccessToken } from "@/lib/api";
-import { NAME_COLORS, OWNER_RED } from "@/lib/vip";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { getCountry } from "@/lib/countries";
-import { Section, Toggle, SocialInput } from "@/components/profile-ui";
+import { Section } from "@/components/profile-ui";
 import SocialCircles from "@/components/social-circles";
 
 type Me = {
@@ -52,15 +51,7 @@ export default function ProfileScreen() {
   const ready = useRequireAuth();
 
   const [me, setMe] = useState<Me | null>(null);
-  const [subPrice, setSubPrice] = useState(4.99); // live 1-month price from the dashboard
-
-  useEffect(() => {
-    fetch("/api/settings").then((r) => r.json())
-      .then((d) => { if (typeof d?.settings?.priceSubscription === "number") setSubPrice(d.settings.priceSubscription); })
-      .catch(() => {});
-  }, []);
   const [stats, setStats] = useState<Stats | null>(null);
-  const [editing, setEditing] = useState(false); // edit mode reveals the location + premium controls
   // (the profile-page rooms shortcut was removed per the client's list, item 9)
   const [toast, setToast] = useState<string | null>(null);
   const [bioDraft, setBioDraft] = useState<string | null>(null); // null = not editing
@@ -173,8 +164,6 @@ export default function ProfileScreen() {
 
   // what others currently see about my location
   const preciseOn = !!me?.isPremium && !!me?.shareLocation;
-  const locStatus = preciseOn ? t("profile.locPrecise") : me?.showDistance ? t("profile.locDistance") : t("profile.locOff");
-  const locDot = preciseOn ? "bg-emerald-500" : me?.showDistance ? "bg-amber-500" : "bg-slate-400";
 
   const socials = [me?.social1, me?.social2, me?.social3].filter(Boolean) as string[];
 
@@ -197,12 +186,13 @@ export default function ProfileScreen() {
           <p className="text-center text-[15px] font-extrabold text-white">{t("profile.title")}</p>
           <div className="flex items-center gap-2">
             {/* the rooms shortcut was removed per the client — rooms live only in their own tab */}
+            {/* the pencil now goes straight to Settings — all account & premium edits live there */}
             <button
-              onClick={() => setEditing((e) => !e)}
-              aria-label={t("profile.edit")}
-              className={`grid h-9 w-9 place-items-center rounded-full active:scale-95 ${editing ? "bg-white text-brand-700" : "bg-white/15 text-white"}`}
+              onClick={() => router.push("/settings")}
+              aria-label={t("profile.settings")}
+              className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95"
             >
-              <Pencil className="h-4 w-4" />
+              <Settings className="h-4 w-4" />
             </button>
             <button onClick={() => storyInputRef.current?.click()} aria-label={t("stories.you")} className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
               <Plus className="h-5 w-5" strokeWidth={2.6} />
@@ -324,26 +314,6 @@ export default function ProfileScreen() {
           )}
         </Section>
 
-        {/* location — only while editing the profile (always available in settings too) */}
-        {editing && (
-        <Section title={t("profile.location")}>
-          <div className="flex items-center gap-2 border-b border-slate-100 py-3">
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${locDot}`} />
-            <p className="text-[13px] font-bold text-ink">{locStatus}</p>
-          </div>
-          <Toggle icon={<Ruler className="h-4 w-4" />} label={t("register.distance")} hint={t("register.distanceHint")} value={!!me?.showDistance} onChange={(v) => patch({ showDistance: v })} last={!me?.isPremium ? false : false} />
-          {me?.isPremium ? (
-            <Toggle icon={<MapPin className="h-4 w-4" />} label={t("profile.shareLocation")} hint={t("profile.shareLocationHint")} value={!!me?.shareLocation} onChange={toggleLocation} last />
-          ) : (
-            <button onClick={() => router.push("/subscribe")} className="flex w-full items-center gap-3 py-3 text-start">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-500"><MapPin className="h-4 w-4" /></span>
-              <span className="flex-1 text-[13px] font-bold text-amber-600">{t("profile.locUpsell")}</span>
-              <Crown className="h-4 w-4 shrink-0 text-amber-500" />
-            </button>
-          )}
-        </Section>
-        )}
-
         {/* my posts — images & videos, with create */}
         <Section title={t("merchant.posts")}>
           <div className="grid grid-cols-3 gap-2 py-3">
@@ -367,42 +337,6 @@ export default function ProfileScreen() {
         </Section>
         <input ref={postInputRef} type="file" accept="image/*,video/*" hidden onChange={publishPost} />
 
-        {/* premium controls — only while editing the profile */}
-        {editing && (me?.isPremium ? (
-          <Section title={t("profile.premium")}>
-            <div className="border-b border-slate-100 py-3">
-              <p className="mb-1 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Palette className="h-4 w-4 text-brand-600" /> {t("profile.textColor")}</p>
-              <p className="mb-2.5 text-[11.5px] font-medium leading-snug text-muted">{t("profile.colorHint")}</p>
-              <div className="flex flex-wrap gap-2.5">
-                {/* Presets only. Red appears solely for the owner — it's their exclusive colour. */}
-                {(me?.isAdmin ? [...NAME_COLORS, OWNER_RED] : NAME_COLORS).map((c) => (
-                  <button key={c} onClick={() => patch({ textColor: c })} style={{ backgroundColor: c }} aria-label={c}
-                    className={`grid h-8 w-8 place-items-center rounded-full transition-all ${me?.textColor === c ? "ring-2 ring-offset-2 ring-brand-500" : ""}`}>
-                    {me?.textColor === c && <Check className="h-4 w-4 text-white" strokeWidth={3} />}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="py-3">
-              <p className="mb-1 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Link2 className="h-4 w-4 text-brand-600" /> {t("profile.socials")}</p>
-              <p className="mb-2.5 text-[11.5px] text-muted">{t("profile.socialsHint")}</p>
-              <div className="flex flex-col gap-2">
-                <SocialInput value={me?.social1 || ""} onSave={(v) => patch({ social1: v || null })} />
-                <SocialInput value={me?.social2 || ""} onSave={(v) => patch({ social2: v || null })} />
-                <SocialInput value={me?.social3 || ""} onSave={(v) => patch({ social3: v || null })} />
-              </div>
-            </div>
-          </Section>
-        ) : (
-          <button onClick={() => router.push("/subscribe")} className="mb-4 flex w-full items-center gap-3 rounded-2xl bg-gradient-to-l from-amber-500 to-amber-600 p-4 text-start shadow-sm active:scale-[0.99]">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/20 text-white"><Crown className="h-6 w-6" /></span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[14.5px] font-extrabold text-white">{t("premium.upgrade")}</p>
-              <p className="text-[11.5px] font-medium text-amber-50">{t("premium.upgradeHint")}</p>
-            </div>
-            <span dir="ltr" className="shrink-0 rounded-xl bg-white px-3 py-1.5 text-[13px] font-extrabold text-amber-600">${subPrice}</span>
-          </button>
-        ))}
 
         {/* social link boxes preview (what visitors see) */}
         {socials.length > 0 && (

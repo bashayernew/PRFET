@@ -10,3 +10,14 @@ next-env.d.ts
 /ios
 /android
 /public/uploads/
+
+# IDE + build cache + junk
+/.idea
+*.tsbuildinfo
+.write-test
+*.tmp.*
+
+# personal / non-app files that must never be published
+*.docx
+Bashayer_Abouamer_Resume.docx
+Manayer_Abouamer_Resume.docx

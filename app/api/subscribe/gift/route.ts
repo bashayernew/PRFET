@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
 import { getPrices, subPrice } from "@/lib/pricing";
+import { createInvoice } from "@/lib/invoice";
 
 const DAYS = 30;
 
@@ -73,6 +74,9 @@ export async function POST(req: Request) {
   await prisma.message.create({ data: { conversationId: theirConvo.id, fromMe: false, kind: "gift", body } });
 
   notify(peerId, "gift_premium", { actorId: payload.sub, targetId: payload.sub, text: String(months) }).catch(() => {});
+
+  // the gifter is the one billed
+  await createInvoice({ userId: payload.sub, kind: "subscription", description: `Gifted Premium — ${months} month(s)`, amount: giftAmount });
 
   return NextResponse.json({ ok: true, expiresAt: expiresAt.toISOString(), amount: giftAmount });
 }

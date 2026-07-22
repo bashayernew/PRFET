@@ -58,7 +58,6 @@ export default function MeetingCreateScreen() {
 
   if (!ready) return null;
 
-  const total = hours * PRICE_PER_HOUR;
   const valid = title.trim().length >= 2 && joinCode.trim().length >= 4;
 
   async function create() {
@@ -217,12 +216,7 @@ export default function MeetingCreateScreen() {
           </>
         )}
 
-        {/* bill */}
-        <div className="flex items-center justify-between rounded-2xl bg-brand-50 px-4 py-3">
-          <span className="text-[13px] font-bold text-brand-700">{t("meet.total")}</span>
-          <span className="text-[18px] font-extrabold text-brand-700">${ld(total, locale)}</span>
-        </div>
-        <p className="mt-1.5 text-[11.5px] font-medium text-muted">${ld(PRICE_PER_HOUR, locale)}/{t("meet.hour")} × {ld(hours, locale)} {t("meet.hourUnit")}</p>
+        {/* rooms are part of the Premium subscription — no per-room charge */}
       </div>
 
       {/* create */}
@@ -233,7 +227,7 @@ export default function MeetingCreateScreen() {
           disabled={!valid}
           className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid ? "bg-brand-600" : "bg-slate-300"}`}
         >
-          {t("meet.startPay")} · ${ld(total, locale)}
+          {t("meet.startPay")}
         </motion.button>
       </div>
     </div>

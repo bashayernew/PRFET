@@ -135,25 +135,9 @@ export default function SettingsScreen() {
   }
 
   /** Same behaviour as on the profile: turning it on grabs the phone's location once. */
-  function toggleLocation(v: boolean) {
-    if (v && typeof navigator !== "undefined" && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => patch({ shareLocation: true, locationLat: pos.coords.latitude, locationLng: pos.coords.longitude }),
-        () => patch({ shareLocation: true })
-      );
-    } else {
-      patch({ shareLocation: v }); // coords stay stored — they only power the distance, never shown
-    }
-  }
-
   if (!ready) return null;
   const isBusiness = me?.accountType === "business";
   const nameColor = me?.isPremium && me?.textColor ? me.textColor : undefined;
-
-  // what others currently see about my location — same status line as the profile
-  const preciseOn = !!me?.isPremium && !!me?.shareLocation;
-  const locStatus = preciseOn ? t("profile.locPrecise") : me?.showDistance ? t("profile.locDistance") : t("profile.locOff");
-  const locDot = preciseOn ? "bg-emerald-500" : me?.showDistance ? "bg-amber-500" : "bg-slate-400";
 
   return (
     <div dir={dir} className="mx-auto flex h-[100dvh] max-w-[480px] flex-col bg-slate-50">
@@ -205,21 +189,8 @@ export default function SettingsScreen() {
               <Segmented options={[{ value: "public", label: t("register.public") }, { value: "friends", label: t("register.friends") }]} value={me?.visibility || "public"} onChange={(v) => patch({ visibility: v })} />
             </div>
           )}
-          {/* the same location status + controls the profile pencil reveals */}
-          <div className="flex items-center gap-2 border-b border-slate-100 py-3">
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${locDot}`} />
-            <p className="text-[13px] font-bold text-ink">{locStatus}</p>
-          </div>
+          {/* precise-location control lives on the profile + home page, not here (per client) */}
           <Toggle icon={<Ruler className="h-4 w-4" />} label={t("register.distance")} hint={t("register.distanceHint")} value={!!me?.showDistance} onChange={(v) => patch({ showDistance: v })} />
-          {me?.isPremium ? (
-            <Toggle icon={<MapPin className="h-4 w-4" />} label={t("profile.shareLocation")} hint={t("profile.shareLocationHint")} value={!!me?.shareLocation} onChange={toggleLocation} />
-          ) : (
-            <button onClick={() => router.push("/subscribe")} className="flex w-full items-center gap-3 py-3 text-start">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-500"><MapPin className="h-4 w-4" /></span>
-              <span className="flex-1 text-[13px] font-bold text-amber-600">{t("profile.locUpsell")}</span>
-              <Crown className="h-4 w-4 shrink-0 text-amber-500" />
-            </button>
-          )}
           <Toggle icon={<ImageDown className="h-4 w-4" />} label={t("register.media")} hint={t("register.mediaHint")} value={!!me?.allowSaveMedia} onChange={(v) => patch({ allowSaveMedia: v })} />
           <Toggle icon={<MessageCircle className="h-4 w-4" />} label={t("dm.closed")} hint={t("dm.closedHint")} value={!!me?.dmClosed} onChange={(v) => patch({ dmClosed: v })} />
           {/* parental lock: the "most viewed" doorway disappears from the home page */}

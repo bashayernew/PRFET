@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
+import { createInvoice } from "@/lib/invoice";
 
 const schema = z.object({
   name: z.string().min(2).max(80),
@@ -116,6 +117,12 @@ export async function POST(req: Request) {
         : {}),
     },
   });
+
+  // a fresh listing or a post-expiry renewal is a charge — invoice it
+  if (expired && seekerAd > 0) {
+    await createInvoice({ userId: payload.sub, kind: "seeker", description: "Job-seeker ad — 30 days", amount: seekerAd });
+  }
+
   return NextResponse.json({ id: seeker.id, renewed: expired }, { status: 201 });
 }
 

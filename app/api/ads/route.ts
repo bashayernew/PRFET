@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, adPrice } from "@/lib/pricing";
+import { createInvoice } from "@/lib/invoice";
 
 const ALLOWED_DAYS = [1, 2, 3, 7, 15, 30];
 
@@ -97,6 +98,7 @@ export async function POST(req: Request) {
   });
 
   await prisma.notification.create({ data: { userId: payload.sub, kind: "ad_review", data: ad.caption ?? null, targetId: ad.id } });
+  await createInvoice({ userId: payload.sub, kind: "ad", description: `Ad — ${countryList.length} country/ies × ${d.durationDays} day(s)`, amount: price });
 
   return NextResponse.json({ id: ad.id, price, status: ad.status }, { status: 201 });
 }

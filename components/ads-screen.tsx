@@ -96,7 +96,7 @@ export default function AdsScreen() {
     const res = await apiGet<{ ads: MyAd[] }>("/api/ads", token);
     if (res.ok && res.data?.ads) setMyAds(res.data.ads);
     // live ads from real users (shown to everyone in the feed)
-    const served = await apiGet<{ ads: RealAd[] }>("/api/ads/serve?limit=10");
+    const served = await apiGet<{ ads: RealAd[] }>("/api/ads/serve?limit=100");
     if (served.ok && served.data?.ads) setRealAds(served.data.ads);
   }, []);
 
@@ -239,8 +239,9 @@ export default function AdsScreen() {
             {realAds.length === 0 && (
               <p className="rounded-2xl bg-white py-8 text-center text-[13px] font-bold text-muted ring-1 ring-slate-100">{t("ads.noneToday")}</p>
             )}
-            {/* real ads from users — advertiser is one tap away */}
-            {realAds.map((ad, i) => (
+            {/* real ads from users — advertiser is one tap away.
+                Exclude my own ads here; they already show in "Your ads" above (no duplicates). */}
+            {realAds.filter((ad) => !myAds.some((m) => m.id === ad.id)).map((ad, i) => (
               <motion.div
                 key={ad.id}
                 initial={{ opacity: 0, y: 12 }}

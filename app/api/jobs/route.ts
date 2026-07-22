@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
+import { createInvoice } from "@/lib/invoice";
 
 const schema = z.object({
   title: z.string().min(2).max(120),
@@ -125,5 +126,7 @@ export async function POST(req: Request) {
       birthTo: d.birthTo ?? null,
     },
   });
+  await createInvoice({ userId: payload.sub, kind: "job", description: `Job ad — ${job.title}`, amount: poster?.freeJobPost ? 0 : jobPost });
+
   return NextResponse.json({ id: job.id }, { status: 201 });
 }

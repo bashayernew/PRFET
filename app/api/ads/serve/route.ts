@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const country = (url.searchParams.get("country") || "").toUpperCase();
-  const limit = Math.min(Number(url.searchParams.get("limit") || 5), 10);
+  const limit = Math.min(Number(url.searchParams.get("limit") || 30), 100);
 
   // expire ads whose window passed (maintenance sweep)
   await prisma.ad.updateMany({

@@ -66,6 +66,7 @@ model User {
   branches      User[]  @relation("Branches")
   grantReqsBy   AdminGrantRequest[] @relation("GrantReqBy")
   grantReqsFor  AdminGrantRequest[] @relation("GrantReqFor")
+  invoices      Invoice[]
 
   // Premium (subscription) — unlocked by the $30 plan
   isPremium     Boolean   @default(false)
@@ -541,6 +542,23 @@ model AppSettings {
   priceJobPost      Float @default(1.99) // company job ad, per month
   priceSeekerAd     Float @default(0.99) // individual "looking for work" ad, per month
   updatedAt      DateTime @updatedAt
+}
+
+/// Every real payment becomes an invoice — the dashboard's Invoices page lists them all.
+model Invoice {
+  id          String   @id @default(cuid())
+  number      String   @unique // human-friendly, e.g. PRFET-202607-0001
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerName String  // snapshot of the name at purchase time
+  kind        String // subscription | ad | job | seeker
+  description String
+  amount      Float
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
 }
 
 /// A sub-admin wants to gift premium — the owner says yes or no from the dashboard.
