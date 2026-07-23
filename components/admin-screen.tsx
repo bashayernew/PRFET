@@ -96,7 +96,7 @@ type PromoUser = {
 type GrantUser = {
   id: string; name: string; email?: string | null; phone?: string | null; avatarUrl?: string | null;
   country?: string | null; accountType: string; isPremium: boolean; premiumUntil: string | null; isAdmin: boolean;
-  freeAds: boolean; freeJobPost: boolean; freeSeekerAd: boolean;
+  freeAdsLeft: number; freeJobPostLeft: number; freeSeekerLeft: number;
 };
 
 type SuspUser = {
@@ -137,7 +137,9 @@ export default function AdminScreen() {
   const [archMonth, setArchMonth] = useState<string>(currentMonth());
   const [archCountry, setArchCountry] = useState("all");
 
-  const [repView, setRepView] = useState<"reports" | "suspended">("reports");
+  const [repView, setRepView] = useState<"reports" | "suspended" | "ads">("reports");
+  const [modAds, setModAds] = useState<{ id: string; caption: string | null; mediaUrl: string | null; status: string; views: number; advertiser: string; createdAt: string }[]>([]);
+  const [modAdsQ, setModAdsQ] = useState("");
   const [suspended, setSuspended] = useState<SuspUser[]>([]);
   const [reports, setReports] = useState<Rep[]>([]);
   const [days, setDays] = useState<Record<string, string>>({});
@@ -371,6 +373,16 @@ export default function AdminScreen() {
 
   /** The "Suspended accounts" stat card lands here — straight onto the list. */
   function openSuspended() { setTab("reports"); setRepView("suspended"); loadSuspended(); }
+
+  async function loadModAds() {
+    const res = await apiGet<{ ads: typeof modAds }>(`/api/admin/ads?q=${encodeURIComponent(modAdsQ.trim())}`, getAccessToken() || undefined);
+    if (res.ok && res.data?.ads) setModAds(res.data.ads);
+  }
+  async function moderateAd(id: string, action: "stop" | "delete" | "activate") {
+    if (action === "delete" && !confirm(t("adm.adDeleteConfirm"))) return;
+    const res = await apiPost("/api/admin/ads", { id, action }, getAccessToken() || undefined);
+    if (res.ok) { flash(t("adm.grantDone")); loadModAds(); } else flash(t("common.error"));
+  }
 
   async function unsuspendUser(u: SuspUser) {
     const res = await apiPost("/api/admin/suspend", { userId: u.id, days: 0 }, getAccessToken() || undefined);
@@ -666,21 +678,25 @@ export default function AdminScreen() {
                   )}
                 </div>
 
-                {/* free posting rights */}
-                <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantFreeSection")}</p>
+                {/* free posting credits — how many free ones the admin gifts */}
+                <p className="mb-1 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantFreeSection")}</p>
+                <p className="mb-2 text-[11px] font-medium text-muted">{t("adm.grantFreeHint")}</p>
                 <div className="flex flex-col gap-2">
                   {([
-                    { k: "freeAds" as const, label: t("adm.grantFreeAds") },
-                    { k: "freeJobPost" as const, label: t("adm.grantFreeJobs") },
-                    { k: "freeSeekerAd" as const, label: t("adm.grantFreeSeeker") },
+                    { k: "freeAdsLeft" as const, label: t("adm.grantFreeAds") },
+                    { k: "freeJobPostLeft" as const, label: t("adm.grantFreeJobs") },
+                    { k: "freeSeekerLeft" as const, label: t("adm.grantFreeSeeker") },
                   ]).map((o) => (
-                    <button key={o.k} onClick={() => grant({ [o.k]: !grantSel[o.k] })} disabled={busyGrant}
-                      className={`flex items-center justify-between rounded-2xl px-4 py-3 ring-1 disabled:opacity-40 ${grantSel[o.k] ? "bg-emerald-50 ring-emerald-300" : "bg-white ring-slate-200 hover:ring-slate-300"}`}>
-                      <span className={`text-[13px] font-bold ${grantSel[o.k] ? "text-emerald-700" : "text-ink"}`}>{o.label}</span>
-                      <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-extrabold ${grantSel[o.k] ? "bg-emerald-600 text-white" : "bg-slate-100 text-muted"}`}>
-                        {grantSel[o.k] ? t("adm.grantOn") : t("adm.grantOff")}
-                      </span>
-                    </button>
+                    <div key={o.k} className="flex items-center justify-between gap-2 rounded-2xl bg-white px-4 py-2.5 ring-1 ring-slate-200">
+                      <span className="text-[13px] font-bold text-ink">{o.label}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-muted">{t("adm.grantRemaining")}: {ld(grantSel[o.k], locale)}</span>
+                        <input type="number" min={0} defaultValue={grantSel[o.k]} dir="ltr"
+                          onKeyDown={(e) => { if (e.key === "Enter") grant({ [o.k]: Math.max(0, parseInt((e.target as HTMLInputElement).value) || 0) }); }}
+                          onBlur={(e) => { const v = Math.max(0, parseInt(e.target.value) || 0); if (v !== grantSel[o.k]) grant({ [o.k]: v }); }}
+                          className="h-9 w-16 rounded-xl border-2 border-slate-200 bg-white text-center text-[13px] font-extrabold text-ink outline-none focus:border-brand-500" />
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -742,7 +758,7 @@ export default function AdminScreen() {
                 <div dir="ltr" className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/logo.png" alt="PRFET" className="h-8 w-auto object-contain" />
+                    <img src="/logo.jpg" alt="PRFET" className="h-8 w-auto object-contain" />
                     <div className="text-end">
                       <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Invoice</p>
                       <p className="text-[13px] font-extrabold text-ink">{invView.number}</p>
@@ -926,6 +942,10 @@ export default function AdminScreen() {
                     className={`px-3.5 py-1.5 text-[12px] font-extrabold ${repView === "suspended" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
                     {t("adm.viewSuspended")}
                   </button>
+                  <button onClick={() => { setRepView("ads"); loadModAds(); }}
+                    className={`px-3.5 py-1.5 text-[12px] font-extrabold ${repView === "ads" ? "bg-[#131743] text-white" : "bg-white text-muted hover:text-ink"}`}>
+                    {t("adm.viewAds")}
+                  </button>
                 </div>
               </div>
               {/* search accounts / keywords across ALL reports, old ones included */}
@@ -1086,6 +1106,51 @@ export default function AdminScreen() {
                   ))}
                 </div>
               )
+            )}
+
+            {/* ads moderation — stop or remove any ad */}
+            {repView === "ads" && (
+              <>
+                <div className="mb-4 flex w-full max-w-md items-center gap-2">
+                  <input value={modAdsQ} onChange={(e) => setModAdsQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") loadModAds(); }}
+                    placeholder={t("adm.adSearchPh")} className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-4 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <button onClick={loadModAds} className="h-11 rounded-2xl bg-[#131743] px-5 text-[13px] font-bold text-white active:scale-95">{t("discover.search")}</button>
+                </div>
+                {modAds.length === 0 ? (
+                  <div className="grid place-items-center rounded-3xl bg-white py-16 ring-1 ring-slate-200">
+                    <Megaphone className="h-9 w-9 text-slate-300" />
+                    <p className="mt-2 text-[14px] font-bold text-muted">{t("adm.noAds")}</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {modAds.map((ad) => (
+                      <div key={ad.id} className="flex flex-col overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+                        <div className="relative grid h-24 place-items-center bg-gradient-to-br from-brand-600 to-accent-600">
+                          {ad.mediaUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={ad.mediaUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                          ) : (
+                            <p className="line-clamp-2 px-3 text-center text-[13px] font-extrabold text-white">{ad.caption}</p>
+                          )}
+                          <span className={`absolute end-2 top-2 rounded-md px-2 py-0.5 text-[10px] font-extrabold text-white ${ad.status === "active" ? "bg-emerald-500" : ad.status === "rejected" ? "bg-red-500" : "bg-slate-500"}`}>{ad.status}</span>
+                        </div>
+                        <div className="flex flex-1 flex-col p-3">
+                          <p className="truncate text-[13px] font-extrabold text-ink">{ad.caption || ad.advertiser}</p>
+                          <p className="truncate text-[11.5px] font-medium text-muted">{ad.advertiser} · 👁 {ld(ad.views, locale)}</p>
+                          <div className="mt-2 flex gap-2">
+                            {ad.status === "active" ? (
+                              <button onClick={() => moderateAd(ad.id, "stop")} className="h-9 flex-1 rounded-xl bg-orange-50 text-[12px] font-bold text-orange-600 hover:bg-orange-100">{t("adm.adStop")}</button>
+                            ) : (
+                              <button onClick={() => moderateAd(ad.id, "activate")} className="h-9 flex-1 rounded-xl bg-emerald-50 text-[12px] font-bold text-emerald-700 hover:bg-emerald-100">{t("adm.adActivate")}</button>
+                            )}
+                            <button onClick={() => moderateAd(ad.id, "delete")} className="h-9 flex-1 rounded-xl bg-red-50 text-[12px] font-bold text-red-600 hover:bg-red-100">{t("adm.adDelete")}</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}

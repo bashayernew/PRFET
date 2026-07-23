@@ -20,9 +20,9 @@ const schema = z.object({
   premiumUntil: z.string().optional(), // ISO date, e.g. "2027-01-01"
   revokePremium: z.boolean().optional(),
   // free-posting rights
-  freeAds: z.boolean().optional(),
-  freeJobPost: z.boolean().optional(),
-  freeSeekerAd: z.boolean().optional(),
+  freeAdsLeft: z.number().int().min(0).max(9999).optional(),
+  freeJobPostLeft: z.number().int().min(0).max(9999).optional(),
+  freeSeekerLeft: z.number().int().min(0).max(9999).optional(),
 });
 
 // POST /api/admin/grant — the Grants page: gift premium and free-posting rights.
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   // A sub-admin's premium gift goes to the owner's queue instead of applying directly.
   // Revoking and free-posting flags stay owner-only.
   if (!admin.isOwner) {
-    if (d.revokePremium || typeof d.freeAds === "boolean" || typeof d.freeJobPost === "boolean" || typeof d.freeSeekerAd === "boolean") {
+    if (d.revokePremium || typeof d.freeAdsLeft === "number" || typeof d.freeJobPostLeft === "number" || typeof d.freeSeekerLeft === "number") {
       return NextResponse.json({ error: "owner_only" }, { status: 403 });
     }
     if (d.premiumMonths || d.premiumUntil) {
@@ -95,9 +95,9 @@ export async function POST(req: Request) {
   }
 
   // ---- free-posting rights ----
-  if (typeof d.freeAds === "boolean") data.freeAds = d.freeAds;
-  if (typeof d.freeJobPost === "boolean") data.freeJobPost = d.freeJobPost;
-  if (typeof d.freeSeekerAd === "boolean") data.freeSeekerAd = d.freeSeekerAd;
+  if (typeof d.freeAdsLeft === "number") data.freeAdsLeft = d.freeAdsLeft;
+  if (typeof d.freeJobPostLeft === "number") data.freeJobPostLeft = d.freeJobPostLeft;
+  if (typeof d.freeSeekerLeft === "number") data.freeSeekerLeft = d.freeSeekerLeft;
 
   if (!Object.keys(data).length) return NextResponse.json({ error: "nothing_to_do" }, { status: 400 });
 
@@ -107,7 +107,7 @@ export async function POST(req: Request) {
     select: {
       id: true, displayName: true, email: true, phone: true, avatarUrl: true, country: true,
       accountType: true, isPremium: true, premiumUntil: true, isAdmin: true,
-      freeAds: true, freeJobPost: true, freeSeekerAd: true,
+      freeAdsLeft: true, freeJobPostLeft: true, freeSeekerLeft: true,
     },
   });
 
@@ -116,7 +116,7 @@ export async function POST(req: Request) {
       id: u.id, name: u.displayName, email: u.email, phone: u.phone, avatarUrl: u.avatarUrl,
       country: u.country, accountType: u.accountType,
       isPremium: u.isPremium, premiumUntil: u.premiumUntil?.toISOString() ?? null, isAdmin: u.isAdmin,
-      freeAds: u.freeAds, freeJobPost: u.freeJobPost, freeSeekerAd: u.freeSeekerAd,
+      freeAdsLeft: u.freeAdsLeft, freeJobPostLeft: u.freeJobPostLeft, freeSeekerLeft: u.freeSeekerLeft,
     },
   });
 }

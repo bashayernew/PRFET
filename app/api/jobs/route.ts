@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
-import { createInvoice } from "@/lib/invoice";
+import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 
 const schema = z.object({
   title: z.string().min(2).max(120),
@@ -101,13 +101,14 @@ export async function POST(req: Request) {
   const d = parsed.data;
 
   // A job ad costs its posting fee and runs for 30 days, then waits for renewal.
-  // Users the admin marked as free job posters pay nothing.
-  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeJobPost: true } });
+  // Users with admin-gifted free job posts pay nothing (one credit spent).
+  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeJobPostLeft: true } });
+  const freeJob = (poster?.freeJobPostLeft ?? 0) > 0;
   const { jobPost } = await getPrices();
 
   const job = await prisma.job.create({
     data: {
-      cost: poster?.freeJobPost ? 0 : jobPost,
+      cost: freeJob ? 0 : jobPost,
       expiresAt: new Date(Date.now() + AD_MONTH_MS),
       companyId: payload.sub,
       title: d.title.trim(),
@@ -126,7 +127,10 @@ export async function POST(req: Request) {
       birthTo: d.birthTo ?? null,
     },
   });
-  await createInvoice({ userId: payload.sub, kind: "job", description: `Job ad — ${job.title}`, amount: poster?.freeJobPost ? 0 : jobPost });
+  if (freeJob) await prisma.user.update({ where: { id: payload.sub }, data: { freeJobPostLeft: { decrement: 1 } } }).catch(() => {});
+  const jobFee = freeJob ? 0 : jobPost;
+  await createInvoice({ userId: payload.sub, kind: "job", description: `Job ad — ${job.title}`, amount: jobFee });
+  if (jobFee > 0) await sendPurchaseNotice(payload.sub, `Job ad — ${job.title}`, jobFee);
 
   return NextResponse.json({ id: job.id }, { status: 201 });
 }

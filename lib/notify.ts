@@ -6,7 +6,7 @@ function ensure() {
   if (configured) return !!process.env.VAPID_PRIVATE_KEY;
   configured = true;
   if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-    webpush.setVapidDetails("mailto:support@herot.app", process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+    webpush.setVapidDetails("mailto:admin@prfet.com", process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
     return true;
   }
   return false;

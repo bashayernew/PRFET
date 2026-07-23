@@ -30,7 +30,7 @@ export default function WelcomeScreen() {
       {/* brand */}
       <motion.div variants={up} custom={0} initial="hidden" animate="show" className="flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="PRFET" className="h-auto w-[240px] max-w-[70%] object-contain" />
+        <img src="/logo.jpg" alt="PRFET" className="h-auto w-[240px] max-w-[70%] object-contain" />
         <p className="mt-6 text-[15px] font-bold text-ink">{t("welcome.tagline")}</p>
       </motion.div>
 

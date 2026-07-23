@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
-  ArrowRight, ArrowLeft, ImagePlus, Film, Megaphone, CircleDashed,
+  ArrowRight, ArrowLeft, ImagePlus, CircleDashed,
   UploadCloud, Repeat2, Bookmark, MessageCircle, X,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
@@ -12,7 +12,7 @@ import { useRequireAuth } from "@/lib/use-auth";
 import { apiPost, apiUpload, getAccessToken } from "@/lib/api";
 import BottomNav from "@/components/bottom-nav";
 
-type Mode = "hub" | "post" | "reel";
+type Mode = "hub" | "post";
 
 /** The + tab: publish a post, a reel or a story — and the rules that come with it. */
 export default function CreateScreen() {
@@ -63,7 +63,7 @@ export default function CreateScreen() {
             <Back className="h-5 w-5" strokeWidth={2.4} />
           </button>
           <h1 className="text-[18px] font-extrabold text-white">
-            {t(mode === "post" ? "create.post" : mode === "reel" ? "create.reel" : "create.title")}
+            {t(mode === "post" ? "create.post" : "create.title")}
           </h1>
         </div>
         {mode === "hub" && <p className="mt-1.5 ps-[52px] text-[12.5px] font-medium text-white/75">{t("create.subtitle")}</p>}
@@ -80,32 +80,19 @@ export default function CreateScreen() {
               onClick={() => setMode("post")}
             />
             <HubCard
-              icon={<Film className="h-6 w-6" />}
-              title={t("create.reel")}
-              sub={t("create.reelSub")}
-              tint="from-violet-700 to-fuchsia-500"
-              onClick={() => setMode("reel")}
-            />
-            <HubCard
               icon={<CircleDashed className="h-6 w-6" />}
               title={t("create.story")}
               sub={t("create.storySub")}
               tint="from-amber-600 to-rose-500"
               onClick={() => storyRef.current?.click()}
             />
-            <HubCard
-              icon={<Megaphone className="h-6 w-6" />}
-              title={t("create.ad")}
-              sub={t("create.adSub")}
-              tint="from-emerald-700 to-teal-500"
-              onClick={() => router.push("/ads")}
-            />
+            {/* Reel removed, and ads are a subscription feature reached from their own tab (per client) */}
             <input ref={storyRef} type="file" accept="image/*,video/*" hidden onChange={postStory} />
             {busy && <p className="text-center text-[13px] font-bold text-muted">{t("create.uploading")}</p>}
           </div>
         ) : (
           <Composer
-            kind={mode === "reel" ? "video" : "image"}
+            kind="image"
             t={t}
             onDone={(msg) => { flash(msg); setMode("hub"); router.push("/feed"); }}
             onFail={(msg) => flash(msg)}

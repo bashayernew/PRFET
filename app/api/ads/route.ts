@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, adPrice } from "@/lib/pricing";
-import { createInvoice } from "@/lib/invoice";
+import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 
 const ALLOWED_DAYS = [1, 2, 3, 7, 15, 30];
 
@@ -76,10 +76,11 @@ export async function POST(req: Request) {
   if (!countryList.length) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
   // the client's formula: base = 1 country + 1 day; each extra country/day adds its increment.
-  // Users the admin marked as free advertisers pay nothing.
-  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeAds: true } });
+  // Users with admin-gifted free ads pay nothing (and one free credit is spent).
+  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeAdsLeft: true } });
+  const freeAd = (poster?.freeAdsLeft ?? 0) > 0;
   const prices = await getPrices();
-  const price = poster?.freeAds ? 0 : adPrice(prices, countryList.length, d.durationDays);
+  const price = freeAd ? 0 : adPrice(prices, countryList.length, d.durationDays);
   const expiresAt = new Date(Date.now() + d.durationDays * 24 * 60 * 60 * 1000);
 
   const ad = await prisma.ad.create({
@@ -97,8 +98,10 @@ export async function POST(req: Request) {
     },
   });
 
+  if (freeAd) await prisma.user.update({ where: { id: payload.sub }, data: { freeAdsLeft: { decrement: 1 } } }).catch(() => {});
   await prisma.notification.create({ data: { userId: payload.sub, kind: "ad_review", data: ad.caption ?? null, targetId: ad.id } });
   await createInvoice({ userId: payload.sub, kind: "ad", description: `Ad — ${countryList.length} country/ies × ${d.durationDays} day(s)`, amount: price });
+  if (price > 0) await sendPurchaseNotice(payload.sub, "Ad", price);
 
   return NextResponse.json({ id: ad.id, price, status: ad.status }, { status: 201 });
 }

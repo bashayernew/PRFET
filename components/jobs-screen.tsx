@@ -64,14 +64,7 @@ export default function JobsScreen() {
 
       <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-6 pt-5">
         {mode === "hub" && (
-          <Hub
-            onPick={setMode}
-            t={t}
-            locale={locale}
-            onOpenProfile={(uid) => router.push(`/business/${uid}`)}
-            onMessage={(uid) => router.push(`/messages/${uid}`)}
-            onOpenJob={(jobId) => router.push(`/job/${jobId}`)}
-          />
+          <Hub onPick={setMode} t={t} />
         )}
         {mode === "post-job" && <PostJob t={t} locale={locale} onDone={(m) => { flash(m); setMode("hub"); }} />}
         {mode === "post-cv" && <PostCv t={t} locale={locale} onDone={(m) => { flash(m); setMode("hub"); }} />}
@@ -98,35 +91,12 @@ export default function JobsScreen() {
   );
 }
 
-function Hub({
-  onPick, t, locale, onOpenProfile, onMessage, onOpenJob,
-}: {
-  onPick: (m: Mode) => void;
-  t: (k: string) => string;
-  locale: Locale;
-  onOpenProfile: (uid: string) => void;
-  onMessage: (uid: string) => void;
-  onOpenJob: (jobId: string) => void;
-}) {
+function Hub({ onPick, t }: { onPick: (m: Mode) => void; t: (k: string) => string }) {
   const cards: { key: Mode; icon: React.ReactNode; title: string; sub: string; tint: string }[] = [
     { key: "post-job", icon: <Briefcase className="h-6 w-6" />, title: t("jobs.postJob"), sub: t("jobs.postJobSub"), tint: "from-brand-700 to-brand-500" },
     { key: "post-cv", icon: <UserPlus className="h-6 w-6" />, title: t("jobs.postCv"), sub: t("jobs.postCvSub"), tint: "from-violet-700 to-violet-500" },
     { key: "search", icon: <Search className="h-6 w-6" />, title: t("jobs.searchTitle"), sub: t("jobs.searchSub"), tint: "from-emerald-700 to-emerald-500" },
   ];
-
-  // What's already posted — jobs on one side, people looking on the other.
-  const [tab, setTab] = useState<"jobs" | "seekers">("jobs");
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [seekers, setSeekers] = useState<Seeker[] | null>(null);
-
-  useEffect(() => {
-    const token = getAccessToken() || undefined;
-    // the server puts your country first in both lists
-    apiGet<{ jobs: Job[] }>("/api/jobs", token).then((r) => setJobs(r.ok && r.data?.jobs ? r.data.jobs : []));
-    apiGet<{ seekers: Seeker[] }>("/api/job-seekers", token).then((r) => setSeekers(r.ok && r.data?.seekers ? r.data.seekers : []));
-  }, []);
-
-  const list = tab === "jobs" ? jobs : seekers;
 
   return (
     <div className="flex flex-col gap-4">
@@ -147,101 +117,7 @@ function Hub({
         </motion.button>
       ))}
 
-      {/* the two filters: companies hiring, and people looking */}
-      <div className="mt-2 flex gap-2 rounded-2xl bg-white p-1.5 ring-1 ring-slate-100">
-        {(["jobs", "seekers"] as const).map((k) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className={`flex-1 rounded-xl py-2.5 text-[13px] font-bold transition-colors ${tab === k ? "bg-brand-600 text-white" : "text-muted"}`}
-          >
-            {t(k === "jobs" ? "jobs.tabJobs" : "jobs.tabSeekers")}
-            {(k === "jobs" ? jobs : seekers) && ` (${ld((k === "jobs" ? jobs! : seekers!).length, locale)})`}
-          </button>
-        ))}
-      </div>
-
-      {list === null ? null : list.length === 0 ? (
-        <p className="rounded-2xl bg-white py-8 text-center text-[13px] font-bold text-muted ring-1 ring-slate-100">
-          {t(tab === "jobs" ? "jobs.noJobs" : "jobs.noSeekers")}
-        </p>
-      ) : tab === "jobs" ? (
-        <div className="flex flex-col gap-2.5">
-          {(list as Job[]).map((j) => (
-            <button
-              key={j.id}
-              onClick={() => onOpenJob(j.id)}
-              className="flex items-center gap-3 rounded-2xl bg-white p-3 text-start ring-1 ring-slate-100 active:scale-[0.99]"
-            >
-              <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-brand-50 text-brand-600">
-                {j.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={j.imageUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  <Briefcase className="h-5 w-5" />
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[14px] font-extrabold text-ink">{j.title}</span>
-                <span className="block truncate text-[12px] font-medium text-muted">{j.companyName}</span>
-                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-bold text-muted">
-                  {j.country && (
-                    <span className="flex items-center gap-1">
-                      <MapPin className="h-3 w-3" />
-                      {j.country.split(",").map((c) => getCountry(c)?.flag ?? c).join(" ")}
-                    </span>
-                  )}
-                  {j.salary && <span className="flex items-center gap-1"><Wallet className="h-3 w-3" /> {j.salary}</span>}
-                </span>
-              </span>
-              <span
-                onClick={(e) => { e.stopPropagation(); onMessage(j.companyId); }}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-600 text-white active:scale-95"
-              >
-                <MessageCircle className="h-4 w-4" />
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-2.5">
-          {(list as Seeker[]).map((sk) => (
-            <button
-              key={sk.id}
-              onClick={() => onOpenProfile(sk.userId)}
-              className="flex items-center gap-3 rounded-2xl bg-white p-3 text-start ring-1 ring-slate-100 active:scale-[0.99]"
-            >
-              <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-full bg-violet-50 text-[15px] font-extrabold text-violet-600">
-                {sk.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={sk.imageUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  (sk.name || "•").charAt(0).toUpperCase()
-                )}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[14px] font-extrabold text-ink">{sk.name}</span>
-                {sk.title && <span className="block truncate text-[12px] font-medium text-muted">{sk.title}</span>}
-                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-bold text-muted">
-                  {sk.countries.length > 0 && (
-                    <span className="flex items-center gap-1">
-                      <Globe2 className="h-3 w-3" />
-                      {sk.countries.map((c) => getCountry(c)?.flag ?? c).join(" ")}
-                    </span>
-                  )}
-                  {sk.experience && <span>{sk.experience}</span>}
-                </span>
-              </span>
-              <span
-                onClick={(e) => { e.stopPropagation(); onMessage(sk.userId); }}
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-600 text-white active:scale-95"
-              >
-                <MessageCircle className="h-4 w-4" />
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* the two listing portals were removed — vacancies & seekers now live in the Search page */}
     </div>
   );
 }

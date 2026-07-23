@@ -33,34 +33,45 @@ export async function createInvoice(opts: {
 }
 
 /**
- * The welcome DM a new subscriber gets from the owner account, with a line inviting
- * them to reach the admin. Uses the same conversation/message tables as normal chat.
+ * Send a DM from the owner account to a member (welcome, purchase receipt, etc.).
+ * Uses the same conversation/message tables as normal chat, so the member can reply
+ * and reach the admin directly.
  */
-export async function sendSubscriptionWelcome(subscriberId: string): Promise<void> {
-  const owner = await prisma.user.findFirst({ where: { isOwner: true }, select: { id: true, locale: true } });
-  if (!owner || owner.id === subscriberId) return;
+export async function sendOwnerDM(userId: string, body: string): Promise<void> {
+  const owner = await prisma.user.findFirst({ where: { isOwner: true }, select: { id: true } });
+  if (!owner || owner.id === userId) return;
 
-  const me = await prisma.user.findUnique({ where: { id: subscriberId }, select: { locale: true } });
-  const ar = (me?.locale || "ar") === "ar";
-  const body = ar
-    ? "أهلاً بك في بريميوم 👑 شكراً لاشتراكك في PRFET! لأي استفسار أو مساعدة، راسل الإدارة من هنا مباشرة."
-    : "Welcome to Premium 👑 Thanks for subscribing to PRFET! For anything you need, message the administration right here.";
-
-  // conversation both ways (owner ⇄ subscriber), then a message on each side
   const ownerConvo = await prisma.conversation.upsert({
-    where: { userId_peerId: { userId: owner.id, peerId: subscriberId } },
-    create: { userId: owner.id, peerId: subscriberId },
+    where: { userId_peerId: { userId: owner.id, peerId: userId } },
+    create: { userId: owner.id, peerId: userId },
     update: {},
   }).catch(() => null);
-  const subConvo = await prisma.conversation.upsert({
-    where: { userId_peerId: { userId: subscriberId, peerId: owner.id } },
-    create: { userId: subscriberId, peerId: owner.id },
+  const theirConvo = await prisma.conversation.upsert({
+    where: { userId_peerId: { userId, peerId: owner.id } },
+    create: { userId, peerId: owner.id },
     update: {},
   }).catch(() => null);
 
   if (ownerConvo) await prisma.message.create({ data: { conversationId: ownerConvo.id, fromMe: true, kind: "text", body } }).catch(() => {});
-  if (subConvo) await prisma.message.create({ data: { conversationId: subConvo.id, fromMe: false, kind: "text", body } }).catch(() => {});
+  if (theirConvo) await prisma.message.create({ data: { conversationId: theirConvo.id, fromMe: false, kind: "text", body } }).catch(() => {});
 
-  // a tappable notification that opens the admin chat
-  notify(subscriberId, "new_message", { actorId: owner.id, text: body }).catch(() => {});
+  notify(userId, "new_message", { actorId: owner.id, text: body }).catch(() => {});
+}
+
+/** The welcome DM a new subscriber gets from the owner account. */
+export async function sendSubscriptionWelcome(subscriberId: string): Promise<void> {
+  const me = await prisma.user.findUnique({ where: { id: subscriberId }, select: { locale: true } });
+  const ar = (me?.locale || "ar") === "ar";
+  await sendOwnerDM(subscriberId, ar
+    ? "أهلاً بك في بريميوم 👑 شكراً لاشتراكك في PRFET! لأي استفسار أو مساعدة، راسل الإدارة من هنا مباشرة."
+    : "Welcome to Premium 👑 Thanks for subscribing to PRFET! For anything you need, message the administration right here.");
+}
+
+/** A purchase receipt DM from the owner — for ads, job posts, anything bought. */
+export async function sendPurchaseNotice(userId: string, item: string, amount: number): Promise<void> {
+  const me = await prisma.user.findUnique({ where: { id: userId }, select: { locale: true } });
+  const ar = (me?.locale || "ar") === "ar";
+  await sendOwnerDM(userId, ar
+    ? `تم استلام طلبك: ${item} — بمبلغ $${amount} 🧾 شكراً لك! لأي استفسار راسل الإدارة من هنا.`
+    : `Order received: ${item} — $${amount} 🧾 Thank you! For any question, message the administration here.`);
 }

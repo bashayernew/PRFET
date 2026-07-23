@@ -96,10 +96,11 @@ export async function POST(req: Request) {
 
   // A seeker listing costs its monthly fee. Creating pays it; editing is free while the
   // month runs; saving after expiry counts as the renewal and pays it again.
-  // Users the admin marked as free get it for nothing.
-  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeSeekerAd: true } });
+  // Users with admin-gifted free seeker ads get it for nothing (one credit spent on charge).
+  const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeSeekerLeft: true } });
+  const freeSeeker = (poster?.freeSeekerLeft ?? 0) > 0;
   const { seekerAd: seekerPrice } = await getPrices();
-  const seekerAd = poster?.freeSeekerAd ? 0 : seekerPrice;
+  const seekerAd = freeSeeker ? 0 : seekerPrice;
   const existing = await prisma.jobSeeker.findUnique({ where: { userId: payload.sub } });
   const now = new Date();
   const expired = !existing || !existing.expiresAt || existing.expiresAt <= now;
@@ -118,9 +119,13 @@ export async function POST(req: Request) {
     },
   });
 
-  // a fresh listing or a post-expiry renewal is a charge — invoice it
-  if (expired && seekerAd > 0) {
-    await createInvoice({ userId: payload.sub, kind: "seeker", description: "Job-seeker ad — 30 days", amount: seekerAd });
+  // a fresh listing or a post-expiry renewal: spend a free credit if used, else invoice
+  if (expired) {
+    if (freeSeeker) {
+      await prisma.user.update({ where: { id: payload.sub }, data: { freeSeekerLeft: { decrement: 1 } } }).catch(() => {});
+    } else if (seekerAd > 0) {
+      await createInvoice({ userId: payload.sub, kind: "seeker", description: "Job-seeker ad — 30 days", amount: seekerAd });
+    }
   }
 
   return NextResponse.json({ id: seeker.id, renewed: expired }, { status: 201 });

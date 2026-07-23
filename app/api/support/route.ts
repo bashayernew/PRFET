@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { rateLimit } from "@/lib/rate-limit";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
+import { sendSupportEmail } from "@/lib/email";
 
 const schema = z.object({
   kind: z.enum(["complaint", "inquiry", "suggestion", "call", "legal"]).default("suggestion"),
@@ -33,6 +34,17 @@ export async function POST(req: Request) {
       contact: parsed.data.contact?.trim() || "",
     },
   });
+
+  // forward to the app inbox (admin@prfet.com). Saved either way — email is best-effort.
+  const sender = payload ? await prisma.user.findUnique({ where: { id: payload.sub }, select: { displayName: true } }) : null;
+  sendSupportEmail({
+    kind: parsed.data.kind,
+    subject: parsed.data.subject?.trim() || "",
+    body: parsed.data.body.trim(),
+    contact: parsed.data.contact?.trim() || "",
+    fromName: sender?.displayName ?? null,
+  }).catch(() => {});
+
   return NextResponse.json({ id: t.id }, { status: 201 });
 }
 

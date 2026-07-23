@@ -36,6 +36,7 @@ const META: Record<string, { icon: typeof Bell; titleKey: string; bodyKey: strin
   sponsor_appointed: { icon: Crown, titleKey: "notif.sponsorTitle", bodyKey: "notif.sponsorBody", tint: "bg-amber-500" },
   branch_linked: { icon: Bell, titleKey: "notif.branchTitle", bodyKey: "notif.branchBody", tint: "bg-brand-600" },
   admin_appointed: { icon: ShieldCheck, titleKey: "notif.adminTitle", bodyKey: "notif.adminBody", tint: "bg-red-500" },
+  ad_removed: { icon: Megaphone, titleKey: "notif.adRemovedTitle", bodyKey: "notif.adRemovedBody", tint: "bg-red-500" },
   suspended: { icon: ShieldAlert, titleKey: "notif.suspTitle", bodyKey: "notif.suspBody", tint: "bg-red-500" },
   unsuspended: { icon: ShieldCheck, titleKey: "notif.unsuspTitle", bodyKey: "notif.unsuspBody", tint: "bg-emerald-500" },
 };
@@ -69,6 +70,7 @@ function sentence(n: Notif, t: (k: string) => string) {
     case "sponsor_appointed": return text || t("notif.sponsorBody");
     case "branch_linked": return text || t("notif.branchBody");
     case "admin_appointed": return text || t("notif.adminBody");
+    case "ad_removed": return t("notif.adRemovedBody");
     case "suspended": return text || t("notif.suspBody");
     case "unsuspended": return t("notif.unsuspBody");
     default: return text;

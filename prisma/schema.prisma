@@ -49,10 +49,10 @@ model User {
   // "لا أستقبل رسائل" — when true, only people on the allow-list can message me
   dmClosed       Boolean @default(false)
   hideTop        Boolean @default(false) // parental lock: hides the "most viewed" doorway
-  // admin-granted freebies: these users post without being charged
-  freeAds        Boolean @default(false)
-  freeJobPost    Boolean @default(false)
-  freeSeekerAd   Boolean @default(false)
+  // admin-granted freebies: a COUNT of free posts the admin gifted (decremented as used)
+  freeAdsLeft     Int @default(0)
+  freeJobPostLeft Int @default(0)
+  freeSeekerLeft  Int @default(0)
   // subscription auto-renewal: on by default, cancelling turns it off (premium
   // then runs to its end date and lapses). renewMonths = which bundle to rebill.
   autoRenew        Boolean @default(true)

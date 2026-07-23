@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     select: {
       id: true, displayName: true, email: true, phone: true, avatarUrl: true, country: true,
       accountType: true, isPremium: true, premiumUntil: true, isAdmin: true,
-      freeAds: true, freeJobPost: true, freeSeekerAd: true,
+      freeAdsLeft: true, freeJobPostLeft: true, freeSeekerLeft: true,
     },
   });
 
@@ -42,7 +42,7 @@ export async function GET(req: Request) {
       id: u.id, name: u.displayName, email: u.email, phone: u.phone, avatarUrl: u.avatarUrl,
       country: u.country, accountType: u.accountType,
       isPremium: u.isPremium, premiumUntil: u.premiumUntil?.toISOString() ?? null, isAdmin: u.isAdmin,
-      freeAds: u.freeAds, freeJobPost: u.freeJobPost, freeSeekerAd: u.freeSeekerAd,
+      freeAdsLeft: u.freeAdsLeft, freeJobPostLeft: u.freeJobPostLeft, freeSeekerLeft: u.freeSeekerLeft,
     })),
   });
 }

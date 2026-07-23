@@ -8,7 +8,7 @@ import { COUNTRIES } from "@/lib/countries";
 // from the admin dashboard (the pencil on the contact page) whenever ready.
 const DEFAULTS = {
   id: "app",
-  adminEmail: "admin@herotchat.com",
+  adminEmail: "admin@prfet.com",
   supportPhone: "+96598905755",
   whatsapp: "+96598905755",
   aboutAr: "PRFET يقرّبك ممن حولك — اكتشف المتاجر والخدمات والأشخاص من حولك، تابعهم، وتواصل معهم مباشرة.",
@@ -16,7 +16,7 @@ const DEFAULTS = {
   complaintsInfo: "نستقبل شكواك هنا وتُراجع من الإدارة خلال ٤٨ ساعة، وسنرد عليك على بريدك أو رقمك إن أضفته.",
   inquiriesInfo: "اكتب استفسارك وسترد عليك الإدارة في أقرب وقت، عادة خلال ٢٤ ساعة.",
   legalRepName: "المحامي / عمر علي الفودري",
-  legalRepEmail: "legal@herotchat.com",
+  legalRepEmail: "legal@prfet.com",
   legalRepPhone: "", // his personal number is deliberately NOT shown anywhere
   legalRepAvatar: "",
   legalRepUserId: "",

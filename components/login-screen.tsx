@@ -74,7 +74,7 @@ export default function LoginScreen() {
       {/* brand */}
       <div className="mt-8 flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="PRFET" className="h-auto w-[150px] object-contain" />
+        <img src="/logo.jpg" alt="PRFET" className="h-auto w-[150px] object-contain" />
         <h1 className="mt-5 text-2xl font-extrabold text-ink">{t("login.title")}</h1>
         <p className="mt-2 max-w-[300px] text-[14px] leading-relaxed text-muted">{t("login.subtitle")}</p>
       </div>
