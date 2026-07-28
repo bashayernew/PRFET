@@ -46,3 +46,24 @@ export async function GET(req: Request) {
     })),
   });
 }
+
+// DELETE /api/admin/users?id=… — permanently remove an account (admins can't be removed).
+export async function DELETE(req: Request) {
+  const admin = await requireAdmin(req);
+  if (!admin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  const url = new URL(req.url);
+  const id = (url.searchParams.get("id") || "").trim();
+  if (!id) return NextResponse.json({ error: "no_id" }, { status: 400 });
+
+  const target = await prisma.user.findUnique({ where: { id }, select: { isAdmin: true } });
+  if (!target) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  if (target.isAdmin) return NextResponse.json({ error: "cannot_delete_admin" }, { status: 400 });
+
+  try {
+    await prisma.user.delete({ where: { id } });
+  } catch {
+    return NextResponse.json({ error: "delete_failed" }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
+}

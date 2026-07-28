@@ -67,10 +67,25 @@ export async function sendSubscriptionWelcome(subscriberId: string): Promise<voi
     : "Welcome to Premium 👑 Thanks for subscribing to PRFET! For anything you need, message the administration right here.");
 }
 
-/** A purchase receipt DM from the owner — for ads, job posts, anything bought. */
-export async function sendPurchaseNotice(userId: string, item: string, amount: number): Promise<void> {
+/** Localized item names by kind: [Arabic, English]. */
+const ITEM_NAMES: Record<"ad" | "job" | "seeker" | "subscription", [string, string]> = {
+  ad: ["إعلان", "Ad"],
+  job: ["إعلان وظيفة", "Job ad"],
+  seeker: ["إعلان باحث عن عمل", "Job-seeker ad"],
+  subscription: ["اشتراك بريميوم", "Premium subscription"],
+};
+
+/** A purchase receipt DM from the owner — for ads, job posts, anything bought.
+ *  The message is written in the buyer's own language (Arabic by default). */
+export async function sendPurchaseNotice(
+  userId: string,
+  kind: "ad" | "job" | "seeker" | "subscription",
+  amount: number,
+  detail?: string,
+): Promise<void> {
   const me = await prisma.user.findUnique({ where: { id: userId }, select: { locale: true } });
   const ar = (me?.locale || "ar") === "ar";
+  const item = (ar ? ITEM_NAMES[kind][0] : ITEM_NAMES[kind][1]) + (detail ? ` — ${detail}` : "");
   await sendOwnerDM(userId, ar
     ? `تم استلام طلبك: ${item} — بمبلغ $${amount} 🧾 شكراً لك! لأي استفسار راسل الإدارة من هنا.`
     : `Order received: ${item} — $${amount} 🧾 Thank you! For any question, message the administration here.`);

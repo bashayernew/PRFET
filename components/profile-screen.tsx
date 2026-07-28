@@ -60,6 +60,14 @@ export default function ProfileScreen() {
   const avatarRef = useRef<HTMLInputElement>(null);
   const storyInputRef = useRef<HTMLInputElement>(null);
   const postInputRef = useRef<HTMLInputElement>(null);
+  // who viewed my profile (null = sheet closed)
+  const [viewers, setViewers] = useState<{ id: string; name: string; avatarUrl: string | null; country: string | null; at: string }[] | null>(null);
+
+  async function openViewers() {
+    setViewers([]);
+    const res = await apiGet<{ viewers: typeof viewers }>("/api/profile-views", getAccessToken() || undefined);
+    if (res.ok && res.data?.viewers) setViewers(res.data.viewers);
+  }
 
   useEffect(() => {
     if (!ready) return;
@@ -185,18 +193,7 @@ export default function ProfileScreen() {
           </button>
           <p className="text-center text-[15px] font-extrabold text-white">{t("profile.title")}</p>
           <div className="flex items-center gap-2">
-            {/* the rooms shortcut was removed per the client — rooms live only in their own tab */}
-            {/* the pencil now goes straight to Settings — all account & premium edits live there */}
-            <button
-              onClick={() => router.push("/settings")}
-              aria-label={t("profile.settings")}
-              className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-            <button onClick={() => storyInputRef.current?.click()} aria-label={t("stories.you")} className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
-              <Plus className="h-5 w-5" strokeWidth={2.6} />
-            </button>
+            {/* the single Settings button — all account & premium edits live there */}
             <button onClick={() => router.push("/settings")} aria-label={t("profile.settings")} className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
               <Settings className="h-5 w-5" />
             </button>
@@ -263,7 +260,7 @@ export default function ProfileScreen() {
           <span className="my-2 w-px bg-white/15" />
           <Stat value={stats?.following} label={t("profile.following")} onClick={() => router.push("/follows?tab=following")} />
           <span className="my-2 w-px bg-white/15" />
-          <Stat value={stats?.profileViews} label={t("profile.views")} />
+          <Stat value={stats?.profileViews} label={t("profile.views")} onClick={openViewers} />
         </div>
 
       </div>
@@ -358,6 +355,44 @@ export default function ProfileScreen() {
           className="pointer-events-none absolute bottom-24 left-1/2 -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-[13px] font-bold text-white shadow-lg">
           {toast}
         </motion.div>
+      )}
+
+      {/* who viewed my profile */}
+      {viewers !== null && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={() => setViewers(null)}>
+          <div dir={dir} className="max-h-[75vh] w-full max-w-[480px] overflow-hidden rounded-t-3xl bg-white" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+              <p className="text-[15px] font-extrabold text-ink">{t("profile.viewers")}</p>
+              <button onClick={() => setViewers(null)} className="text-[13px] font-bold text-brand-600">{t("close")}</button>
+            </div>
+            <div className="no-scrollbar max-h-[60vh] overflow-y-auto p-2">
+              {viewers.length === 0 ? (
+                <p className="py-12 text-center text-[13px] font-bold text-muted">{t("profile.noViewers")}</p>
+              ) : (
+                viewers.map((v) => {
+                  const c = getCountry(v.country);
+                  return (
+                    <button key={v.id} onClick={() => { setViewers(null); router.push(`/business/${v.id}`); }}
+                      className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-start hover:bg-slate-50">
+                      {v.avatarUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={v.avatarUrl} alt="" className="h-11 w-11 rounded-full object-cover" />
+                      ) : (
+                        <span className="grid h-11 w-11 place-items-center rounded-full bg-brand-50 text-[15px] font-extrabold text-brand-600">{(v.name || "•").charAt(0).toUpperCase()}</span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14px] font-extrabold text-ink">{v.name}</span>
+                        <span className="block truncate text-[11.5px] font-medium text-muted">
+                          {c ? `${c.flag} ${c[locale as "ar" | "en"]}` : ""}{c ? " · " : ""}{new Date(v.at).toLocaleDateString(locale === "ar" ? "ar" : "en-GB")}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <BottomNav active="profile" />

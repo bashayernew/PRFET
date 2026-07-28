@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, ArrowLeft, Plus, Users, Clock, Radio, Mic, Lock } from "lucide-react";
+import { ArrowRight, ArrowLeft, Plus, Users, Radio, Mic, Lock, Search } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, getAccessToken } from "@/lib/api";
@@ -19,6 +19,7 @@ export default function MeetingsScreen() {
   const ready = useRequireAuth();
   const Back = dir === "rtl" ? ArrowRight : ArrowLeft;
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     if (!ready) return;
@@ -33,6 +34,13 @@ export default function MeetingsScreen() {
   }
 
   if (!ready) return null;
+
+  const shown = q.trim()
+    ? rooms.filter((r) => {
+        const s = q.trim().toLowerCase();
+        return r.title.toLowerCase().includes(s) || r.host.toLowerCase().includes(s);
+      })
+    : rooms;
 
   return (
     <div dir={dir} className="mx-auto flex min-h-[100dvh] max-w-[480px] flex-col bg-slate-50">
@@ -56,6 +64,17 @@ export default function MeetingsScreen() {
         >
           <Plus className="h-5 w-5" /> {t("meet.create")}
         </motion.button>
+
+        {/* search rooms */}
+        <div className="mt-3 flex items-center gap-2 rounded-2xl bg-white px-3.5 ring-1 ring-slate-200 focus-within:ring-brand-500">
+          <Search className="h-4 w-4 text-muted" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("meet.searchPh")}
+            className="h-11 flex-1 bg-transparent text-[13.5px] font-medium text-ink outline-none placeholder:text-muted"
+          />
+        </div>
       </div>
 
       {/* live rooms */}
@@ -64,10 +83,10 @@ export default function MeetingsScreen() {
           <Radio className="h-4 w-4 text-red-500" /> {t("meet.live")}
         </h2>
         <div className="flex flex-col gap-3">
-          {rooms.length === 0 && (
+          {shown.length === 0 && (
             <p className="rounded-2xl bg-white py-8 text-center text-[13px] font-bold text-muted ring-1 ring-slate-100">{t("meet.noRooms")}</p>
           )}
-          {rooms.map((r) => (
+          {shown.map((r) => (
             <button
               key={r.id}
               onClick={() => enter(r)}
@@ -95,10 +114,6 @@ export default function MeetingsScreen() {
               </span>
             </button>
           ))}
-        </div>
-
-        <div className="mt-5 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-[11.5px] font-medium text-amber-700">
-          <Clock className="mt-0.5 h-4 w-4 shrink-0" /> {t("meet.billNote")}
         </div>
       </div>
     </div>

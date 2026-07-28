@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { isReservedRed, NAME_COLORS } from "@/lib/vip";
-import { bearerFromRequest, verifyAccessToken, publicUser, normalizePhone } from "@/lib/auth";
+import { bearerFromRequest, verifyAccessToken, publicUser, normalizePhone, hashPassword } from "@/lib/auth";
 import { isCountryClosed } from "@/lib/closed";
+import { expireIfLapsed } from "@/lib/premium";
 
 export async function GET(req: Request) {
   const token = bearerFromRequest(req);
@@ -11,8 +12,10 @@ export async function GET(req: Request) {
   const payload = verifyAccessToken(token);
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const user = await prisma.user.findUnique({ where: { id: payload.sub } });
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const found = await prisma.user.findUnique({ where: { id: payload.sub } });
+  if (!found) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // A cancelled subscription that ran out drops the account back to free.
+  const user = await expireIfLapsed(found);
 
   // Country switched off while they were signed in — lock the session out too.
   if (!user.isAdmin && (await isCountryClosed(user.country))) {
@@ -23,13 +26,14 @@ export async function GET(req: Request) {
 }
 
 const patchSchema = z.object({
-  displayName: z.string().min(2).max(80).optional(),
+  displayName: z.string().min(4).max(80).optional(),
   realName: z.string().max(80).nullable().optional(),
   avatarUrl: z.string().max(2000000).nullable().optional(),
   nationality: z.string().max(4).nullable().optional(),
   gender: z.enum(["male", "female"]).nullable().optional(),
   email: z.string().email().max(120).optional(),
   phone: z.string().max(20).optional(),
+  password: z.string().min(8).max(128).optional(), // set or change the account password
   country: z.string().max(4).nullable().optional(),
   browseCountries: z.string().max(200).optional(), // CSV, "" = everywhere
   bio: z.string().max(200).nullable().optional(),
@@ -96,9 +100,15 @@ export async function PATCH(req: Request) {
     const taken = await prisma.user.findFirst({ where: { phone: data.phone as string, NOT: { id: payload.sub } } });
     if (taken) return NextResponse.json({ error: "identifier_taken" }, { status: 409 });
   }
-  if (typeof data.dateOfBirth === "string") {
-    data.dateOfBirth = data.dateOfBirth ? new Date(data.dateOfBirth) : null;
+  // Set or change the account password (hashed; the plaintext is never stored).
+  if (typeof data.password === "string" && (data.password as string).length >= 8) {
+    data.passwordHash = await hashPassword(data.password as string);
   }
+  delete data.password;
+
+  // Date of birth and nationality are locked after signup — they can never be edited (per client).
+  delete data.dateOfBirth;
+  delete data.nationality;
   if (typeof data.address === "string") data.address = (data.address as string).trim() || null;
 
   // Nobody can move themselves into a closed country.

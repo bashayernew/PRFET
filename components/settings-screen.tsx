@@ -3,11 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { User, Store, Mail, Phone, MapPin, Calendar, Eye, EyeOff, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check } from "lucide-react";
+import { User, Store, Mail, MapPin, Eye, EyeOff, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check, Lock } from "lucide-react";
 import { useI18n, type Locale } from "@/lib/i18n";
 import { apiGet, apiPatch, apiPost, apiDelete, logout, getAccessToken } from "@/lib/api";
 import { useRequireAuth } from "@/lib/use-auth";
-import { Section, Row, EditRow, CountryRow, Segmented, Toggle, SocialInput } from "@/components/profile-ui";
+import { Section, EditRow, Segmented, Toggle, SocialInput } from "@/components/profile-ui";
 import { NAME_COLORS, OWNER_RED } from "@/lib/vip";
 
 type Me = {
@@ -134,6 +134,15 @@ export default function SettingsScreen() {
     patch({ locale: l });
   }
 
+  /** Set a password (if none was chosen at signup) or change the existing one. */
+  async function savePassword(pw: string) {
+    if (pw.trim().length < 8) { flash(t("register.passwordHint")); return; }
+    const token = getAccessToken();
+    if (!token) return;
+    const res = await apiPatch<{ user: Me }>("/api/auth/me", { password: pw.trim() } as unknown as Partial<Me>, token);
+    if (res.ok) flash(t("profile.saved")); else flash(t("common.error"));
+  }
+
   /** Same behaviour as on the profile: turning it on grabs the phone's location once. */
   if (!ready) return null;
   const isBusiness = me?.accountType === "business";
@@ -157,18 +166,10 @@ export default function SettingsScreen() {
             label={t("profile.name")}
             value={me?.displayName || ""}
             colorStyle={nameColor ? { color: nameColor } : undefined}
-            onSave={(v) => { if (v.length >= 2) { localStorage.setItem("herot.name", v); patch({ displayName: v }); } }}
+            onSave={(v) => { if (v.trim().length >= 4) { localStorage.setItem("herot.name", v); patch({ displayName: v }); } }}
           />
-          <EditRow icon={<User className="h-[18px] w-[18px]" />} label={isBusiness ? t("register.ownerName") : t("register.realName")} value={me?.realName || ""} onSave={(v) => patch({ realName: v || null })} />
           <EditRow icon={<Mail className="h-[18px] w-[18px]" />} label={t("register.email")} value={me?.email || ""} type="email" ltr onSave={(v) => { if (v) patch({ email: v }); }} />
-          <EditRow icon={<Phone className="h-[18px] w-[18px]" />} label={t("register.phone")} value={me?.phone || ""} type="tel" ltr onSave={(v) => { if (v) patch({ phone: v }); }} />
-          <CountryRow value={me?.country ?? null} locale={locale} onPick={(code) => patch({ country: code })} />
-          <CountryRow value={me?.nationality ?? null} locale={locale} label={t("register.nationality")} onPick={(code) => patch({ nationality: code })} last={!isBusiness && !me} />
-          {!isBusiness && (
-            <Row icon={<Calendar className="h-[18px] w-[18px]" />} label={t("register.dob")} last>
-              <span dir="ltr" className="text-[13.5px] font-bold text-ink">{(me?.dateOfBirth || "").slice(0, 10) || "—"}</span>
-            </Row>
-          )}
+          <EditRow icon={<Lock className="h-[18px] w-[18px]" />} label={t("register.password")} value="" type="password" ltr onSave={savePassword} last={!isBusiness} />
           {isBusiness && (
             <EditRow icon={<MapPin className="h-[18px] w-[18px]" />} label={t("register.address")} value={me?.address || ""} last onSave={(v) => patch({ address: v || null })} />
           )}

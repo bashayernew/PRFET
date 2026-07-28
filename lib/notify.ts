@@ -82,11 +82,14 @@ export async function notify(userId: string, kind: string, opts: NotifyOpts = {}
   ]);
 
   const { title, body } = phrase(kind, me?.locale ?? "ar", actor?.displayName ?? "", text);
+  // Absolute URL on the live domain, so a click always lands on prfet.com even for
+  // push subscriptions that were first created on the old domain.
+  const appOrigin = (process.env.APP_URL || "https://prfet.com").replace(/\/$/, "");
   const payload = JSON.stringify({
     kind,
     title,
     body,
-    url: linkFor(kind, targetId, actorId),
+    url: appOrigin + linkFor(kind, targetId, actorId),
     icon: actor?.avatarUrl || "/icon-192.png",
   });
 

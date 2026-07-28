@@ -36,6 +36,9 @@ const DEFAULTS = {
   priceJobApply: 0,
   priceJobPost: 1.99,
   priceSeekerAd: 0.99,
+  subEnabled: true,
+  adsEnabled: true,
+  jobsEnabled: true,
 };
 
 // GET /api/settings — the app's public contact details (everyone can read).
@@ -75,6 +78,10 @@ const patchSchema = z.object({
   priceJobApply: z.number().min(0).max(100000).optional(),
   priceJobPost: z.number().min(0).max(100000).optional(),
   priceSeekerAd: z.number().min(0).max(100000).optional(),
+  // master on/off switches
+  subEnabled: z.boolean().optional(),
+  adsEnabled: z.boolean().optional(),
+  jobsEnabled: z.boolean().optional(),
 });
 
 /** Keep only real ISO codes, uppercase, deduped — garbage in the CSV never reaches the DB. */
@@ -101,7 +108,7 @@ export async function PATCH(req: Request) {
 
   // legalRepAccount (email/phone) → legalRepUserId. Empty string unlinks.
   const { legalRepAccount, ...data } = parsed.data;
-  const patch: Record<string, string | number> = { ...data } as Record<string, string | number>;
+  const patch: Record<string, string | number | boolean> = { ...data } as Record<string, string | number | boolean>;
   if (typeof legalRepAccount === "string") {
     const id = legalRepAccount.trim();
     if (!id) {

@@ -99,6 +99,9 @@ export async function GET(req: Request) {
     );
   }
 
+  // "reviewed" = sent to the archive. The active queue hides them; ?archived=1 shows only them.
+  const archived = url.searchParams.get("archived") === "1";
+  filtered = archived ? filtered.filter((r) => r.status === "reviewed") : filtered.filter((r) => r.status !== "reviewed");
   filtered.sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1));
   return NextResponse.json({
     reports: filtered,

@@ -47,6 +47,7 @@ type RealUser = {
   accountType: string;
   address: string | null;
   isPremium: boolean;
+  isAdmin?: boolean;
   textColor: string | null;
   hasStory: boolean;
   gender: string | null;
@@ -64,7 +65,7 @@ type RealUser = {
   promoVideoUrl?: string | null;
   promoLinkUrl?: string | null;
   parent?: { id: string; name: string } | null;
-  branches?: { id: string; name: string; avatarUrl: string | null }[];
+  branches?: { id: string; name: string; url: string }[];
 };
 
 // Build the Business-shaped view model, preferring real DB data, falling back to sample.
@@ -233,6 +234,7 @@ export default function MerchantScreen({ id }: { id: string }) {
   const followerCount = b.followers + apiFollowers;
 
   const premium = !!b.isPremium;
+  const isAdmin = !!real?.isAdmin; // admins get the flipped identity: red banner + gold name
   const nat = getCountry(b.nationality);
 
   // precise-location pin state: silver (not subscribed) / green (on) / red (off)
@@ -255,7 +257,7 @@ export default function MerchantScreen({ id }: { id: string }) {
     <div dir={dir} className="mx-auto flex h-[100dvh] max-w-[480px] flex-col bg-slate-50">
       <div className="no-scrollbar flex-1 overflow-y-auto">
         {/* ===== header — same design as your own profile: everything in the blue ===== */}
-        <div className={`px-5 pb-6 pt-[calc(env(safe-area-inset-top)+12px)] ${premium ? "vip-header" : "bg-gradient-to-b from-brand-700 to-brand-600"}`}>
+        <div className={`px-5 pb-6 pt-[calc(env(safe-area-inset-top)+12px)] ${isAdmin ? "bg-gradient-to-b from-red-700 to-red-600" : premium ? "vip-header" : "bg-gradient-to-b from-brand-700 to-brand-600"}`}>
           <div className="flex items-center justify-between">
             <button
               onClick={() => router.back()}
@@ -300,7 +302,7 @@ export default function MerchantScreen({ id }: { id: string }) {
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h1 className="truncate text-[19px] font-extrabold text-white" style={vipStyle(real)}>{name}</h1>
+                <h1 className="truncate text-[19px] font-extrabold text-white" style={isAdmin ? { color: "#f3d97f" } : vipStyle(real)}>{name}</h1>
                 {premium && (
                   <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#17193f] px-2 py-0.5 text-[10px] font-extrabold text-[#f3d97f] ring-1 ring-white/30">
                     <Crown className="h-3 w-3" />
@@ -356,8 +358,7 @@ export default function MerchantScreen({ id }: { id: string }) {
               }
               label={`${ld(b.reviews, locale)} ${t("merchant.reviews")}`}
             />
-            <span className="my-2 w-px bg-white/15" />
-            <HeaderStat value={ld(followerCount, locale)} label={t("merchant.followers")} onClick={() => router.push(`/follows?user=${id}`)} />
+            {/* followers/following are private — shown only on the owner's own profile */}
             <span className="my-2 w-px bg-white/15" />
             <HeaderStat value={<DistValue dist={b.dist} />} label={t("merchant.distance")} />
           </div>
@@ -461,22 +462,17 @@ export default function MerchantScreen({ id }: { id: string }) {
           </a>
         )}
 
-        {/* branches of this account */}
+        {/* branches — admin-added name + link tiles, shown like posts but smaller */}
         {!!real?.branches?.length && (
-          <div className="mx-5 mt-4">
-            <p className="mb-2 text-[13px] font-extrabold text-ink">{t("sponsor.branches")}</p>
-            <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+          <div className="mt-5 px-5">
+            <h2 className="mb-2 text-[15px] font-extrabold text-ink">{t("sponsor.branches")}</h2>
+            <div className="grid grid-cols-4 gap-2">
               {real.branches.map((br) => (
-                <button key={br.id} onClick={() => router.push(`/business/${br.id}`)}
-                  className="flex shrink-0 items-center gap-2 rounded-2xl bg-white px-3 py-2 ring-1 ring-slate-200 active:scale-95">
-                  {br.avatarUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={br.avatarUrl} alt="" className="h-7 w-7 rounded-lg object-cover" />
-                  ) : (
-                    <span className="grid h-7 w-7 place-items-center rounded-lg bg-brand-50 text-[12px] font-extrabold text-brand-600">{br.name.charAt(0)}</span>
-                  )}
-                  <span className="text-[12.5px] font-bold text-ink">{br.name}</span>
-                </button>
+                <a key={br.id} href={br.url || undefined} target="_blank" rel="noopener noreferrer"
+                  className="flex aspect-square flex-col items-center justify-center gap-1 rounded-2xl bg-gradient-to-br from-amber-50 to-white p-1.5 text-center ring-1 ring-amber-200 active:scale-95">
+                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500 text-[13px] font-extrabold text-white">{br.name.charAt(0)}</span>
+                  <span className="line-clamp-2 text-[10.5px] font-bold leading-tight text-ink">{br.name}</span>
+                </a>
               ))}
             </div>
           </div>

@@ -94,6 +94,10 @@ export async function POST(req: Request) {
   const payload = token ? verifyAccessToken(token) : null;
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // master switch: when jobs are paused from the dashboard, posting still works but is FREE.
+  const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { jobsEnabled: true } });
+  const jobsPaid = feat?.jobsEnabled !== false;
+
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }
   const parsed = schema.safeParse(raw);
@@ -103,7 +107,7 @@ export async function POST(req: Request) {
   // A job ad costs its posting fee and runs for 30 days, then waits for renewal.
   // Users with admin-gifted free job posts pay nothing (one credit spent).
   const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeJobPostLeft: true } });
-  const freeJob = (poster?.freeJobPostLeft ?? 0) > 0;
+  const freeJob = (poster?.freeJobPostLeft ?? 0) > 0 || !jobsPaid;
   const { jobPost } = await getPrices();
 
   const job = await prisma.job.create({
@@ -130,7 +134,7 @@ export async function POST(req: Request) {
   if (freeJob) await prisma.user.update({ where: { id: payload.sub }, data: { freeJobPostLeft: { decrement: 1 } } }).catch(() => {});
   const jobFee = freeJob ? 0 : jobPost;
   await createInvoice({ userId: payload.sub, kind: "job", description: `Job ad — ${job.title}`, amount: jobFee });
-  if (jobFee > 0) await sendPurchaseNotice(payload.sub, `Job ad — ${job.title}`, jobFee);
+  if (jobFee > 0) await sendPurchaseNotice(payload.sub, "job", jobFee, job.title);
 
   return NextResponse.json({ id: job.id }, { status: 201 });
 }

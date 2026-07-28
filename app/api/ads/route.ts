@@ -57,6 +57,10 @@ export async function POST(req: Request) {
   const payload = auth(req);
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // master switch: when ads are paused from the dashboard, posting still works but is FREE.
+  const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { adsEnabled: true } });
+  const adsPaid = feat?.adsEnabled !== false;
+
   let raw: unknown;
   try {
     raw = await req.json();
@@ -80,7 +84,7 @@ export async function POST(req: Request) {
   const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeAdsLeft: true } });
   const freeAd = (poster?.freeAdsLeft ?? 0) > 0;
   const prices = await getPrices();
-  const price = freeAd ? 0 : adPrice(prices, countryList.length, d.durationDays);
+  const price = freeAd || !adsPaid ? 0 : adPrice(prices, countryList.length, d.durationDays);
   const expiresAt = new Date(Date.now() + d.durationDays * 24 * 60 * 60 * 1000);
 
   const ad = await prisma.ad.create({
@@ -101,7 +105,7 @@ export async function POST(req: Request) {
   if (freeAd) await prisma.user.update({ where: { id: payload.sub }, data: { freeAdsLeft: { decrement: 1 } } }).catch(() => {});
   await prisma.notification.create({ data: { userId: payload.sub, kind: "ad_review", data: ad.caption ?? null, targetId: ad.id } });
   await createInvoice({ userId: payload.sub, kind: "ad", description: `Ad — ${countryList.length} country/ies × ${d.durationDays} day(s)`, amount: price });
-  if (price > 0) await sendPurchaseNotice(payload.sub, "Ad", price);
+  if (price > 0) await sendPurchaseNotice(payload.sub, "ad", price);
 
   return NextResponse.json({ id: ad.id, price, status: ad.status }, { status: 201 });
 }

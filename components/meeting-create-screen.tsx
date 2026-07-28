@@ -3,15 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, ArrowLeft, Users, Clock, Mic, MessageSquare, Video, Check, UserPlus, KeyRound, Lock, ShieldAlert, Radio } from "lucide-react";
+import { ArrowRight, ArrowLeft, Clock, Mic, MessageSquare, Video, Check, UserPlus, ShieldAlert } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, getAccessToken } from "@/lib/api";
 
 type Target = { id: string; displayName: string; avatarUrl: string | null; category: string | null };
 
-const PRICE_PER_HOUR = 5;
-const MAX_SEATS = 20;
+const MAX_SEATS = 20;   // up to 20 people can be on mic at once
+const ROOM_MINUTES = 45; // every room runs 45 minutes, part of the subscription
 
 export default function MeetingCreateScreen() {
   const router = useRouter();
@@ -20,20 +20,14 @@ export default function MeetingCreateScreen() {
   const Back = dir === "rtl" ? ArrowRight : ArrowLeft;
 
   const [title, setTitle] = useState("");
-  const [hours, setHours] = useState(1);
-  const [seats, setSeats] = useState(10);
   const [allowAudio, setAllowAudio] = useState(true);
   const [allowText, setAllowText] = useState(true);
   const [allowVideo, setAllowVideo] = useState(false);
   const [followees, setFollowees] = useState<Target[]>([]);
   const [invited, setInvited] = useState<string[]>([]);
-  const [joinCode, setJoinCode] = useState(() => Math.random().toString(36).slice(2, 8).toUpperCase());
-  const [followersOnly, setFollowersOnly] = useState(true);
-  // public: everyone sees it · announced: friends see the title, entry needs my approval · hidden: invisible
+  // public: everyone sees it · announced: friends see the title · hidden: invisible
   const [privacy, setPrivacy] = useState<"public" | "announced" | "hidden">("public");
   const [allowRecording, setAllowRecording] = useState(false);
-  const [profileLive, setProfileLive] = useState(false); // show this room as a LIVE on my profile
-  const [isPremium, setIsPremium] = useState(false);
 
   // people you follow — candidates to invite
   useEffect(() => {
@@ -43,13 +37,6 @@ export default function MeetingCreateScreen() {
     apiGet<{ targets: Target[] }>("/api/follows?full=1", token).then((res) => {
       if (res.ok && res.data?.targets) setFollowees(res.data.targets);
     });
-    apiGet<{ user: { isPremium?: boolean } }>("/api/auth/me", token).then((res) => {
-      if (res.ok && res.data?.user) setIsPremium(!!res.data.user.isPremium);
-    });
-    // arriving from the profile's live button pre-enables the toggle
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("live") === "1") {
-      setProfileLive(true);
-    }
   }, [ready]);
 
   function toggleInvite(uid: string) {
@@ -58,23 +45,20 @@ export default function MeetingCreateScreen() {
 
   if (!ready) return null;
 
-  const valid = title.trim().length >= 2 && joinCode.trim().length >= 4;
+  const valid = title.trim().length >= 2;
 
   async function create() {
     if (!valid) return;
     const token = getAccessToken() || undefined;
     const res = await apiPost<{ id: string }>("/api/meetings", {
       title: title.trim(),
-      durationMin: hours * 60,
-      pricePerHour: PRICE_PER_HOUR,
-      maxSeats: seats,
+      durationMin: ROOM_MINUTES,
+      pricePerHour: 0,
+      maxSeats: MAX_SEATS,
       allowAudio, allowText, allowVideo,
       inviteIds: invited.length ? invited : undefined,
-      joinCode: joinCode.trim().toUpperCase(),
-      followersOnly,
       privacy,
       allowRecording,
-      profileLive: isPremium && profileLive,
     }, token);
     const slug = title.trim().slice(0, 24).replace(/\s+/g, "-") || "room";
     router.push(res.ok && res.data?.id ? `/meetings/${res.data.id}` : `/meetings/${slug}-${Date.now()}`);
@@ -100,78 +84,39 @@ export default function MeetingCreateScreen() {
           className="mb-5 h-12 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 text-[15px] font-medium text-ink outline-none focus:border-brand-500 focus:bg-white"
         />
 
-        {/* duration */}
-        <label className="mb-1.5 flex items-center justify-between text-[13px] font-bold text-ink">
-          <span className="flex items-center gap-1.5"><Clock className="h-4 w-4 text-brand-600" /> {t("meet.duration")}</span>
-          <span className="text-brand-600">{ld(hours, locale)} {t("meet.hourUnit")}</span>
-        </label>
-        <input type="range" min={1} max={8} step={1} value={hours} onChange={(e) => setHours(+e.target.value)} className="mb-5 w-full accent-brand-600" />
-
-        {/* seats */}
-        <label className="mb-1.5 flex items-center justify-between text-[13px] font-bold text-ink">
-          <span className="flex items-center gap-1.5"><Users className="h-4 w-4 text-brand-600" /> {t("meet.seats")}</span>
-          <span className="text-brand-600">{ld(seats, locale)} / {ld(MAX_SEATS, locale)}</span>
-        </label>
-        <input type="range" min={2} max={MAX_SEATS} step={1} value={seats} onChange={(e) => setSeats(+e.target.value)} className="mb-1 w-full accent-brand-600" />
-        <p className="mb-5 text-[11.5px] font-medium text-muted">{t("meet.seatsNote")}</p>
-
-        {/* entry code */}
-        <label className="mb-1.5 flex items-center gap-1.5 text-[13px] font-bold text-ink">
-          <KeyRound className="h-4 w-4 text-brand-600" /> {t("meet.code")}
-        </label>
-        <div className="mb-1.5 flex gap-2">
-          <input
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))}
-            dir="ltr"
-            maxLength={8}
-            className="h-12 flex-1 rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 text-[16px] font-extrabold tracking-[0.2em] text-ink outline-none focus:border-brand-500 focus:bg-white"
-          />
-          <button
-            onClick={() => setJoinCode(Math.random().toString(36).slice(2, 8).toUpperCase())}
-            className="shrink-0 rounded-2xl bg-brand-50 px-4 text-[13px] font-bold text-brand-700 active:scale-95"
-          >
-            {t("meet.newCode")}
-          </button>
+        {/* duration — fixed 45 minutes, included in the subscription */}
+        <div className="mb-3 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
+          <span className="flex items-center gap-1.5 text-[13px] font-bold text-ink"><Clock className="h-4 w-4 text-brand-600" /> {t("meet.duration")}</span>
+          <span className="text-[13px] font-extrabold text-brand-600">{ld(ROOM_MINUTES, locale)} {t("meet.minUnit")}</span>
         </div>
-        <p className="mb-5 text-[11.5px] font-medium text-muted">{t("meet.codeHint")}</p>
 
-        {/* privacy */}
+        {/* mic seats — up to 20 people can talk at once; anyone else can join to watch or chat */}
+        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
+          <span className="flex items-center gap-1.5 text-[13px] font-bold text-ink"><Mic className="h-4 w-4 text-brand-600" /> {t("meet.micSeats")}</span>
+          <span className="text-[13px] font-extrabold text-brand-600">{ld(MAX_SEATS, locale)}</span>
+        </div>
+        <p className="mb-5 mt-1.5 text-[11.5px] font-medium leading-snug text-muted">{t("meet.micSeatsNote")}</p>
+
+        {/* privacy — visibility only; entry is approved by the host */}
         <p className="mb-2 text-[13px] font-bold text-ink">{t("meet.privacy")}</p>
-        <div className="mb-5 overflow-hidden rounded-2xl ring-1 ring-slate-100">
-          {/* who can even know this room exists */}
-          <div className="mb-4">
-            <p className="mb-1.5 text-[12.5px] font-bold text-ink">{t("meet.privacy")}</p>
-            <div className="flex gap-1.5 rounded-2xl bg-slate-100 p-1.5">
-              {([
-                { v: "public" as const, label: t("meet.privacyPublic") },
-                { v: "announced" as const, label: t("meet.privacyAnnounced") },
-                { v: "hidden" as const, label: t("meet.privacyHidden") },
-              ]).map((o) => (
-                <button key={o.v} onClick={() => setPrivacy(o.v)}
-                  className={`flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors ${privacy === o.v ? "bg-brand-600 text-white" : "text-muted"}`}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1.5 text-[11.5px] font-medium leading-snug text-muted">
-              {privacy === "public" ? t("meet.privacyPublicHint") : privacy === "announced" ? t("meet.privacyAnnouncedHint") : t("meet.privacyHiddenHint")}
-            </p>
-          </div>
-          <AccessRow icon={<Lock className="h-5 w-5" />} label={t("meet.followersOnly")} on={followersOnly} onClick={() => setFollowersOnly((v) => !v)} />
-          <AccessRow icon={<ShieldAlert className="h-5 w-5" />} label={t("meet.allowRecording")} on={allowRecording} onClick={() => setAllowRecording((v) => !v)} />
-          {/* premium: this room appears as a LIVE badge on my profile, runs 45 min, then closes */}
-          <AccessRow
-            icon={<Radio className="h-5 w-5" />}
-            label={t("meet.profileLive")}
-            on={isPremium && profileLive}
-            onClick={() => (isPremium ? setProfileLive((v) => !v) : router.push("/subscribe"))}
-            last
-          />
+        <div className="flex gap-1.5 rounded-2xl bg-slate-100 p-1.5">
+          {([
+            { v: "public" as const, label: t("meet.privacyPublic") },
+            { v: "announced" as const, label: t("meet.privacyAnnounced") },
+            { v: "hidden" as const, label: t("meet.privacyHidden") },
+          ]).map((o) => (
+            <button key={o.v} onClick={() => setPrivacy(o.v)}
+              className={`flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors ${privacy === o.v ? "bg-brand-600 text-white" : "text-muted"}`}>
+              {o.label}
+            </button>
+          ))}
         </div>
-        {isPremium && profileLive && (
-          <p className="-mt-3.5 mb-5 text-[11.5px] font-medium text-muted">{t("meet.profileLiveHint")}</p>
-        )}
+        <p className="mb-4 mt-1.5 text-[11.5px] font-medium leading-snug text-muted">
+          {privacy === "public" ? t("meet.privacyPublicHint") : privacy === "announced" ? t("meet.privacyAnnouncedHint") : t("meet.privacyHiddenHint")}
+        </p>
+        <div className="mb-5 overflow-hidden rounded-2xl ring-1 ring-slate-100">
+          <AccessRow icon={<ShieldAlert className="h-5 w-5" />} label={t("meet.allowRecording")} on={allowRecording} onClick={() => setAllowRecording((v) => !v)} last />
+        </div>
 
         {/* access defaults */}
         <p className="mb-2 text-[13px] font-bold text-ink">{t("meet.access")}</p>
@@ -227,7 +172,7 @@ export default function MeetingCreateScreen() {
           disabled={!valid}
           className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid ? "bg-brand-600" : "bg-slate-300"}`}
         >
-          {t("meet.startPay")}
+          {t("meet.startRoom")}
         </motion.button>
       </div>
     </div>

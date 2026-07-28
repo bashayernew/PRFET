@@ -25,7 +25,6 @@ export default function ForgotScreen() {
   const [digits, setDigits] = useState<string[]>(Array(LEN).fill(""));
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
-  const [devCode, setDevCode] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +42,8 @@ export default function ForgotScreen() {
     if (!idOk(identifier) || submitting) return;
     setSubmitting(true);
     setError(null);
-    const res = await apiPost<{ devCode?: string }>("/api/auth/forgot", { identifier: normId(identifier) });
+    const res = await apiPost("/api/auth/forgot", { identifier: normId(identifier) });
     if (res.ok) {
-      if (res.data?.devCode) setDevCode(res.data.devCode);
       setStep("reset");
       setSeconds(30);
     } else {
@@ -152,12 +150,6 @@ export default function ForgotScreen() {
           <h1 className="mt-6 text-center text-2xl font-extrabold text-ink">{t("forgot.codeTitle")}</h1>
           <p className="mx-auto mt-2 text-center text-[14px] leading-relaxed text-muted">{t("forgot.codeSubtitle")}</p>
           <p dir="ltr" className="mt-1 text-center text-[14px] font-bold text-brand-600">{normId(identifier)}</p>
-
-          {devCode && (
-            <p className="mx-auto mt-3 rounded-xl bg-amber-50 px-3 py-1.5 text-center text-[12.5px] font-bold text-amber-700">
-              {t("verify.devHint")}: <span dir="ltr">{devCode}</span>
-            </p>
-          )}
 
           <div dir="ltr" className="mt-6 flex justify-center gap-2.5">
             {digits.map((d, i) => (

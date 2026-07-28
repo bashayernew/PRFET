@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
@@ -13,22 +14,31 @@ async function requireAdmin(req: Request): Promise<string | null> {
   return me?.isAdmin ? payload.sub : null;
 }
 
+type BranchLink = { id: string; name: string; url: string };
+
+/** Safely read the branchLinks JSON column into a typed array. */
+function readBranchLinks(v: unknown): BranchLink[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((b): b is Record<string, unknown> => !!b && typeof b === "object")
+    .map((b) => ({ id: String(b.id ?? ""), name: String(b.name ?? ""), url: String(b.url ?? "") }))
+    .filter((b) => b.id && b.name);
+}
+
 const shape = (u: {
   id: string; displayName: string; email: string | null; phone: string | null; avatarUrl: string | null;
   country: string | null; accountType: string;
-  promoVideoUrl: string | null; promoLinkUrl: string | null; parentId: string | null;
-  branches?: { id: string; displayName: string; avatarUrl: string | null }[];
+  promoVideoUrl: string | null; promoLinkUrl: string | null; parentId: string | null; branchLinks?: unknown;
 }) => ({
   id: u.id, name: u.displayName, email: u.email, phone: u.phone, avatarUrl: u.avatarUrl,
   country: u.country, accountType: u.accountType,
   promoVideoUrl: u.promoVideoUrl, promoLinkUrl: u.promoLinkUrl, parentId: u.parentId,
-  branches: (u.branches ?? []).map((b) => ({ id: b.id, name: b.displayName, avatarUrl: b.avatarUrl })),
+  branches: readBranchLinks(u.branchLinks),
 });
 
 const SELECT = {
   id: true, displayName: true, email: true, phone: true, avatarUrl: true, country: true, accountType: true,
-  promoVideoUrl: true, promoLinkUrl: true, parentId: true,
-  branches: { select: { id: true, displayName: true, avatarUrl: true } },
+  promoVideoUrl: true, promoLinkUrl: true, parentId: true, branchLinks: true,
 } as const;
 
 // GET /api/admin/promo?userId=… — one account's promo state; no userId = the current sponsor.
@@ -53,8 +63,8 @@ const schema = z.object({
   makeSponsor: z.boolean().optional(), // true = appoint, false = step down
   videoUrl: z.string().max(500).nullable().optional(), // null clears it
   linkUrl: z.string().max(500).nullable().optional(),
-  addBranchId: z.string().max(40).optional(), // link another account under this one
-  removeBranchId: z.string().max(40).optional(),
+  addBranch: z.object({ name: z.string().min(1).max(60), url: z.string().max(500) }).optional(), // a name+link tile
+  removeBranchId: z.string().max(40).optional(), // remove a branch tile by its id
 });
 
 // POST /api/admin/promo — appoint the sponsor, pin their video & link, manage branches.
@@ -95,23 +105,18 @@ export async function POST(req: Request) {
     await prisma.user.update({ where: { id: d.userId }, data });
   }
 
-  // ---- branches ----
-  if (d.addBranchId) {
-    if (d.addBranchId === d.userId) return NextResponse.json({ error: "self_branch" }, { status: 400 });
-    const branch = await prisma.user.findUnique({ where: { id: d.addBranchId }, select: { id: true, parentId: true, locale: true } });
-    if (!branch) return NextResponse.json({ error: "branch_not_found" }, { status: 404 });
-    // one level only: a branch cannot itself own branches, and the main account cannot be a branch
-    const main = await prisma.user.findUnique({ where: { id: d.userId }, select: { parentId: true } });
-    if (main?.parentId) return NextResponse.json({ error: "main_is_branch" }, { status: 400 });
-    await prisma.user.update({ where: { id: d.addBranchId }, data: { parentId: d.userId } });
-    const ar = (branch.locale || "ar") === "ar";
-    notify(d.addBranchId, "branch_linked", {
-      actorId: admin,
-      text: ar ? `تم ربط حسابك كفرع تابع لـ ${target.displayName}` : `Your account is now linked as a branch of ${target.displayName}`,
-    }).catch(() => {});
-  }
-  if (d.removeBranchId) {
-    await prisma.user.updateMany({ where: { id: d.removeBranchId, parentId: d.userId }, data: { parentId: null } });
+  // ---- branches (name + link tiles, stored on the account's branchLinks) ----
+  if (d.addBranch || d.removeBranchId) {
+    const cur = await prisma.user.findUnique({ where: { id: d.userId }, select: { branchLinks: true } });
+    let list = readBranchLinks(cur?.branchLinks);
+    if (d.addBranch) {
+      const url = d.addBranch.url.trim();
+      list = [...list, { id: crypto.randomUUID(), name: d.addBranch.name.trim(), url }].slice(0, 50); // cap at 50
+    }
+    if (d.removeBranchId) {
+      list = list.filter((b) => b.id !== d.removeBranchId);
+    }
+    await prisma.user.update({ where: { id: d.userId }, data: { branchLinks: list } });
   }
 
   const u = await prisma.user.findUnique({ where: { id: d.userId }, select: SELECT });

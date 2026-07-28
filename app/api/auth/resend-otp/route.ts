@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { generateOtp, sha256, identifierWhere } from "@/lib/auth";
+import { generateOtp, randomOtp, sha256, identifierWhere } from "@/lib/auth";
+import { sendOtpEmail } from "@/lib/email";
 
 const schema = z.object({ identifier: z.string().min(3) });
 const OTP_TTL_MIN = 10;
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
   // Always respond ok (don't leak which accounts exist).
   if (!user) return NextResponse.json({ ok: true });
 
-  const code = generateOtp();
+  const code = user.email ? randomOtp() : generateOtp();
   await prisma.otpCode.create({
     data: {
       userId: user.id,
@@ -30,8 +31,6 @@ export async function POST(req: Request) {
       expiresAt: new Date(Date.now() + OTP_TTL_MIN * 60 * 1000),
     },
   });
-  console.log(`[PRFET] OTP for ${user.email ?? user.phone}: ${code}`);
-
-  const isDev = process.env.NODE_ENV !== "production";
-  return NextResponse.json({ ok: true, ...(isDev ? { devCode: code } : {}) });
+  if (user.email) await sendOtpEmail(user.email, code, "verify");
+  return NextResponse.json({ ok: true });
 }

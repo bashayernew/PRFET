@@ -40,7 +40,7 @@ export async function repostPost(id: string, token?: string) {
 }
 
 export function postLink(id: string) {
-  const origin = typeof location !== "undefined" ? location.origin : "https://herotchat.com";
+  const origin = typeof location !== "undefined" ? location.origin : "https://prfet.com";
   return `${origin}/post/${id}`;
 }
 

@@ -75,6 +75,10 @@ export async function POST(req: Request) {
   const payload = token ? verifyAccessToken(token) : null;
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // master switch: when jobs are paused from the dashboard, seeker ads still work but are FREE.
+  const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { jobsEnabled: true } });
+  const jobsPaid = feat?.jobsEnabled !== false;
+
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }
   const parsed = schema.safeParse(raw);
@@ -98,7 +102,7 @@ export async function POST(req: Request) {
   // month runs; saving after expiry counts as the renewal and pays it again.
   // Users with admin-gifted free seeker ads get it for nothing (one credit spent on charge).
   const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeSeekerLeft: true } });
-  const freeSeeker = (poster?.freeSeekerLeft ?? 0) > 0;
+  const freeSeeker = (poster?.freeSeekerLeft ?? 0) > 0 || !jobsPaid;
   const { seekerAd: seekerPrice } = await getPrices();
   const seekerAd = freeSeeker ? 0 : seekerPrice;
   const existing = await prisma.jobSeeker.findUnique({ where: { userId: payload.sub } });

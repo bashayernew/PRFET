@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { hashPassword, generateOtp, sha256, normalizePhone } from "@/lib/auth";
+import { hashPassword, generateOtp, randomOtp, sha256, normalizePhone } from "@/lib/auth";
+import { sendOtpEmail } from "@/lib/email";
 import { isCountryClosed } from "@/lib/closed";
 
 const phoneRe = /^\+?[0-9]{7,15}$/;
@@ -14,7 +15,7 @@ const schema = z
     email: z.string().email().max(120).optional(),
     phone: z.string().max(20).optional(),
     password: z.string().min(8).max(128).optional(), // optional account password
-    displayName: z.string().min(2).max(80), // public name shown in the app
+    displayName: z.string().min(4).max(80), // public name shown in the app (min 4 chars, per client)
     realName: z.string().max(80).optional(), // personal real name / business owner name
     avatarUrl: z.string().max(2000000).optional(), // profile photo (path or data URL)
     nationality: z.string().max(4).optional(),
@@ -97,7 +98,8 @@ export async function POST(req: Request) {
 
   await prisma.notification.create({ data: { userId: user.id, kind: "welcome" } });
 
-  const code = generateOtp();
+  // Email accounts get a real random code by email; phone keeps the on-screen code until SMS is wired.
+  const code = email ? randomOtp() : generateOtp();
   await prisma.otpCode.create({
     data: {
       userId: user.id,
@@ -107,7 +109,7 @@ export async function POST(req: Request) {
     },
   });
 
-  console.log(`[PRFET] OTP for ${email ?? phone}: ${code}`);
-  const isDev = process.env.NODE_ENV !== "production";
-  return NextResponse.json({ ok: true, ...(isDev ? { devCode: code } : {}) }, { status: 201 });
+  // Deliver the code by email. The code is never returned to the client.
+  if (email) await sendOtpEmail(email, code, "verify");
+  return NextResponse.json({ ok: true }, { status: 201 });
 }

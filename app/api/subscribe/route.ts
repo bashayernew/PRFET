@@ -14,11 +14,17 @@ export async function POST(req: Request) {
   const payload = token ? verifyAccessToken(token) : null;
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // master switch: when subscriptions are closed from the dashboard, only the
+  // 1-month plan remains — the longer bundles disappear.
+  const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { subEnabled: true } });
+  const subOpen = feat?.subEnabled !== false;
+
   let months = 1;
   try {
     const raw = await req.json();
     if (raw && ALLOWED_MONTHS.includes(raw.months)) months = raw.months;
   } catch { /* empty body = 1 month */ }
+  if (!subOpen) months = 1; // closed subscriptions offer the one-month plan only
 
   const prices = await getPrices();
   const price = subPrice(prices, months);

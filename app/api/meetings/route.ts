@@ -12,7 +12,7 @@ const createSchema = z.object({
   allowText: z.boolean().default(true),
   allowVideo: z.boolean().default(false),
   inviteIds: z.array(z.string().max(40)).max(20).optional(), // people to notify about the room
-  joinCode: z.string().min(4).max(8), // required entry code, set by the host
+  joinCode: z.string().min(4).max(8).optional(), // legacy; entry is host-approved now
   followersOnly: z.boolean().default(true),
   privacy: z.enum(["public", "announced", "hidden"]).default("public"),
   allowRecording: z.boolean().default(true),
@@ -106,7 +106,7 @@ export async function POST(req: Request) {
       allowAudio: d.allowAudio,
       allowText: d.allowText,
       allowVideo: d.allowVideo,
-      joinCode: d.joinCode.trim().toUpperCase(),
+      joinCode: (d.joinCode?.trim() || Math.random().toString(36).slice(2, 8)).toUpperCase(),
       // public rooms are for everyone; an announced room shows its title to friends only
       followersOnly: d.privacy === "public" ? false : d.privacy === "announced" ? true : d.followersOnly,
       privacy: d.privacy,

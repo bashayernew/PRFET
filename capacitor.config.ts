@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
   appName: "PRFET",
   webDir: "public",              // placeholder (unused when server.url is set)
   server: {
-    url: "https://herotchat.com", // <-- your hosted server
+    url: "https://prfet.com", // <-- your hosted server
     cleartext: false,             // https only
   },
   ios: { contentInset: "always" },

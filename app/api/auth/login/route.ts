@@ -3,6 +3,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { expireIfLapsed } from "@/lib/premium";
 import {
   verifyPassword,
   signAccessToken,
@@ -61,5 +62,6 @@ export async function POST(req: Request) {
     data: { userId: user.id, tokenHash: sha256(refreshToken), expiresAt },
   });
 
-  return NextResponse.json({ accessToken, refreshToken, user: publicUser(user) });
+  const fresh = await expireIfLapsed(user);
+  return NextResponse.json({ accessToken, refreshToken, user: publicUser(fresh) });
 }

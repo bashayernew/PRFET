@@ -14,11 +14,7 @@ import {
   Eye,
   EyeOff,
   Check,
-  Calendar,
   MapPin,
-  EyeIcon,
-  Ruler,
-  ImageDown,
   Camera,
   ImagePlus,
   Flag,
@@ -28,8 +24,6 @@ import { apiPost } from "@/lib/api";
 import { useOpenCountries } from "@/lib/use-open-countries";
 
 type Account = "personal" | "business";
-type Contact = "email" | "phone";
-type Vis = "public" | "friends" | "private";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -69,26 +63,17 @@ export default function RegisterScreen() {
   const Forward = dir === "rtl" ? ArrowLeft : ArrowRight;
 
   const [account, setAccount] = useState<Account>("personal");
-  const [contact, setContact] = useState<Contact>("email");
 
   const [avatar, setAvatar] = useState<string | null>(null);
-  const [realName, setRealName] = useState("");
   const [name, setName] = useState(""); // public / business name
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [agree, setAgree] = useState(false);
-  const [dob, setDob] = useState("");
   const [nationality, setNationality] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "">("");
   const [address, setAddress] = useState("");
 
-  const [visibility, setVisibility] = useState<Vis>("public");
-  const [showDistance, setShowDistance] = useState(true);
-  const [allowSaveMedia, setAllowSaveMedia] = useState(false);
-  const [hideTop, setHideTop] = useState(false); // parental: opt out of "most viewed" from day one
-  const [showAddress, setShowAddress] = useState(true);
 
   const [touchedContact, setTouchedContact] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -106,12 +91,8 @@ export default function RegisterScreen() {
       const raw = sessionStorage.getItem("herot.regDraft");
       if (!raw) return;
       const d = JSON.parse(raw);
-      if (d.contact === "email" || d.contact === "phone") setContact(d.contact);
-      if (typeof d.realName === "string") setRealName(d.realName);
       if (typeof d.name === "string") setName(d.name);
       if (typeof d.email === "string") setEmail(d.email);
-      if (typeof d.phone === "string") setPhone(d.phone);
-      if (typeof d.dob === "string") setDob(d.dob);
       if (typeof d.nationality === "string") setNationality(d.nationality);
       if (d.gender === "male" || d.gender === "female") setGender(d.gender);
       if (typeof d.address === "string") setAddress(d.address);
@@ -123,18 +104,18 @@ export default function RegisterScreen() {
     try {
       sessionStorage.setItem(
         "herot.regDraft",
-        JSON.stringify({ contact, realName, name, email, phone, dob, nationality, gender, address })
+        JSON.stringify({ name, email, nationality, gender, address })
       );
     } catch { /* ignore */ }
-  }, [contact, realName, name, email, phone, dob, nationality, gender, address]);
+  }, [name, email, nationality, gender, address]);
 
   const isBusiness = account === "business";
-  const contactValid = contact === "email" ? emailOk(email) : phoneOk(phone);
-  const contactError = touchedContact && (contact === "email" ? email.length > 0 && !emailOk(email) : phone.length > 0 && !phoneOk(phone));
+  const contactValid = emailOk(email);
+  const contactError = touchedContact && email.length > 0 && !emailOk(email);
   const passwordOk = password.length === 0 || password.length >= 8;
 
   const valid =
-    name.trim().length >= 2 &&
+    name.trim().length >= 4 && // client: names must be at least 4 characters
     contactValid &&
     passwordOk &&
     agree &&
@@ -153,45 +134,41 @@ export default function RegisterScreen() {
     setSubmitting(true);
     setError(null);
 
-    const country = localStorage.getItem("herot.country") || undefined;
-    const identifier = contact === "email" ? email.trim().toLowerCase() : phone.replace(/[\s()-]/g, "");
+    const identifier = email.trim().toLowerCase();
 
+    // signup is now minimal and email-only: name, nationality, email (+ optional password).
+    // Country and all preference toggles live in Settings after signup.
     const res = await apiPost<{ devCode?: string; error?: string }>("/api/auth/register", {
       accountType: account,
-      contactMethod: contact,
-      email: contact === "email" ? email.trim().toLowerCase() : undefined,
-      phone: contact === "phone" ? phone.replace(/[\s()-]/g, "") : undefined,
+      contactMethod: "email",
+      email: email.trim().toLowerCase(),
       password: password || undefined,
       displayName: name.trim(),
-      realName: realName.trim() || undefined,
       avatarUrl: avatar || undefined,
-      dateOfBirth: !isBusiness && dob ? dob : undefined,
       nationality: !isBusiness && nationality ? nationality : undefined,
       gender: !isBusiness && gender ? gender : undefined,
       address: isBusiness ? address.trim() : undefined,
-      country,
       locale,
-      visibility,
-      showDistance,
-      allowSaveMedia,
-      hideTop,
-      showAddress: isBusiness ? showAddress : true,
     });
 
     if (res.ok) {
       localStorage.setItem("herot.pendingId", identifier);
       localStorage.setItem("herot.name", name.trim());
-      if (res.data.devCode) localStorage.setItem("herot.devCode", res.data.devCode);
-      else localStorage.removeItem("herot.devCode");
+      localStorage.removeItem("herot.devCode");
       router.push("/verify");
       return;
     }
+    const code = res.data?.error;
     setError(
-      res.data?.error === "country_closed"
+      code === "country_closed"
         ? t("auth.countryClosed")
-        : res.status === 409
+        : res.status === 409 || code === "identifier_taken"
           ? t("register.identifierTaken")
-          : t("common.error")
+          : res.status === 429 || code === "rate_limited"
+            ? t("register.tooMany")
+            : code === "invalid_input"
+              ? t("register.invalidInput")
+              : t("register.failed")
     );
     setSubmitting(false);
   }
@@ -202,15 +179,14 @@ export default function RegisterScreen() {
     <div dir={dir} className="mx-auto flex min-h-[100dvh] max-w-[480px] flex-col bg-white px-6 pb-[calc(env(safe-area-inset-bottom)+18px)] pt-[calc(env(safe-area-inset-top)+18px)]">
       {/* top bar */}
       <div className="flex items-center gap-3">
-        <button onClick={() => router.push("/country")} aria-label={t("back")} className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-ink active:scale-95">
+        <button onClick={() => router.push("/")} aria-label={t("back")} className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-ink active:scale-95">
           <Back className="h-5 w-5" strokeWidth={2.4} />
         </button>
         <div className="flex flex-1 items-center gap-1.5">
           <span className="h-1.5 flex-1 rounded-full bg-brand-500" />
-          <span className="h-1.5 flex-1 rounded-full bg-brand-500" />
           <span className="h-1.5 flex-1 rounded-full bg-slate-200" />
         </div>
-        <span className="text-[12px] font-bold text-muted">{ld(2, locale)} / {ld(3, locale)}</span>
+        <span className="text-[12px] font-bold text-muted">{ld(1, locale)} / {ld(2, locale)}</span>
       </div>
 
       {/* heading */}
@@ -245,10 +221,7 @@ export default function RegisterScreen() {
 
       {/* form */}
       <div className="mt-6 flex flex-col gap-4">
-        <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
-          <Field label={isBusiness ? t("register.ownerName") : t("register.realName")} icon={<User className="h-5 w-5" />} value={realName} onChange={setRealName} placeholder={t("register.realNamePh")} />
-        </motion.div>
-
+        {/* personal/owner name removed from signup — only the display name/username is collected (per client) */}
         <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
           <Field
             label={isBusiness ? t("register.businessName") : t("register.publicName")}
@@ -259,11 +232,6 @@ export default function RegisterScreen() {
           />
         </motion.div>
 
-        {!isBusiness && (
-          <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
-            <Field label={t("register.dob")} icon={<Calendar className="h-5 w-5" />} value={dob} onChange={setDob} type="date" ltrInput />
-          </motion.div>
-        )}
         {!isBusiness && (
           <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
             <label className="mb-1.5 block text-[13px] font-bold text-ink">{t("register.gender")}</label>
@@ -294,24 +262,9 @@ export default function RegisterScreen() {
           </motion.div>
         )}
 
-        {/* contact */}
+        {/* email — the only sign-up method; the verification code is sent here */}
         <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
-          <label className="mb-1.5 block text-[13px] font-bold text-ink">{t("register.contactMethod")}</label>
-          <Segmented
-            options={[
-              { value: "email", label: t("register.email"), icon: <Mail className="h-4 w-4" /> },
-              { value: "phone", label: t("register.phone"), icon: <Phone className="h-4 w-4" /> },
-            ]}
-            value={contact}
-            onChange={(v) => { setContact(v as Contact); setTouchedContact(false); }}
-          />
-          <div className="mt-2.5">
-            {contact === "email" ? (
-              <Field label={t("register.email")} icon={<Mail className="h-5 w-5" />} value={email} onChange={setEmail} onBlur={() => setTouchedContact(true)} placeholder={t("register.emailPh")} type="email" ltrInput error={contactError ? t("register.emailInvalid") : undefined} />
-            ) : (
-              <Field label={t("register.phone")} icon={<Phone className="h-5 w-5" />} value={phone} onChange={setPhone} onBlur={() => setTouchedContact(true)} placeholder={t("register.phonePh")} type="tel" ltrInput error={contactError ? t("register.phoneInvalid") : undefined} />
-            )}
-          </div>
+          <Field label={t("register.email")} icon={<Mail className="h-5 w-5" />} value={email} onChange={setEmail} onBlur={() => setTouchedContact(true)} placeholder={t("register.emailPh")} type="email" ltrInput error={contactError ? t("register.emailInvalid") : undefined} />
         </motion.div>
 
         {/* password (optional) */}
@@ -337,29 +290,7 @@ export default function RegisterScreen() {
         {/* privacy & preferences */}
         <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show" className="mt-1 rounded-2xl border-2 border-slate-100 bg-slate-50/60 p-4">
           <p className="text-[13px] font-extrabold text-ink">{t("register.privacy")}</p>
-          <div className="mt-3">
-            <div className="mb-1.5 flex items-center gap-2 text-[13px] font-bold text-ink">
-              <EyeIcon className="h-4 w-4 text-brand-600" /> {t("register.visibility")}
-            </div>
-            <Segmented
-              options={[
-                { value: "public", label: t("register.public") },
-                { value: "friends", label: t("register.friends") },
-              ]}
-              value={visibility}
-              onChange={(v) => setVisibility(v as Vis)}
-            />
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">{t("register.visibilityHint")}</p>
-          </div>
-
-          <div className="mt-4 flex flex-col gap-1 border-t border-slate-200/70 pt-2">
-            <ToggleRow icon={<Ruler className="h-4 w-4" />} label={t("register.distance")} hint={t("register.distanceHint")} value={showDistance} onChange={setShowDistance} />
-            <ToggleRow icon={<ImageDown className="h-4 w-4" />} label={t("register.media")} hint={t("register.mediaHint")} value={allowSaveMedia} onChange={setAllowSaveMedia} />
-            <ToggleRow icon={<EyeOff className="h-4 w-4" />} label={t("settings.hideTop")} hint={t("settings.hideTopHint")} value={hideTop} onChange={setHideTop} />
-            {isBusiness && (
-              <ToggleRow icon={<MapPin className="h-4 w-4" />} label={t("register.showAddress")} hint={t("register.showAddressHint")} value={showAddress} onChange={setShowAddress} />
-            )}
-          </div>
+          {/* visibility, distance, media, most-viewed lock, show-address — all moved to Settings (per client) */}
         </motion.div>
 
         {/* terms */}
@@ -428,17 +359,3 @@ function Segmented({ options, value, onChange }: { options: { value: string; lab
   );
 }
 
-function ToggleRow({ icon, label, hint, value, onChange }: { icon: React.ReactNode; label: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div className="flex items-center gap-3 py-2.5">
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-bold text-ink">{label}</p>
-        <p className="text-[11.5px] leading-snug text-muted">{hint}</p>
-      </div>
-      <button type="button" role="switch" aria-checked={value} onClick={() => onChange(!value)} className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${value ? "bg-brand-500" : "bg-slate-300"}`}>
-        <span className={`absolute top-0.5 grid h-5 w-5 place-items-center rounded-full bg-white shadow transition-all ${value ? "start-[22px]" : "start-0.5"}`} />
-      </button>
-    </div>
-  );
-}

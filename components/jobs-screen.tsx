@@ -12,6 +12,7 @@ import { COUNTRIES, getCountry } from "@/lib/countries";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, apiUpload, getAccessToken } from "@/lib/api";
 import BottomNav from "@/components/bottom-nav";
+import PaymentSheet from "@/components/payment-sheet";
 
 type Mode = "hub" | "post-job" | "post-cv" | "search";
 
@@ -36,6 +37,13 @@ export default function JobsScreen() {
 
   const [mode, setMode] = useState<Mode>("hub");
   const [toast, setToast] = useState<string | null>(null);
+  const [jobsOn, setJobsOn] = useState(true); // dashboard switch: posting jobs/CVs on/off (search stays)
+
+  useEffect(() => {
+    fetch("/api/settings").then((r) => r.json())
+      .then((d) => setJobsOn(d?.settings?.jobsEnabled !== false))
+      .catch(() => {});
+  }, []);
 
   function flash(msg: string) {
     setToast(msg);
@@ -66,8 +74,8 @@ export default function JobsScreen() {
         {mode === "hub" && (
           <Hub onPick={setMode} t={t} />
         )}
-        {mode === "post-job" && <PostJob t={t} locale={locale} onDone={(m) => { flash(m); setMode("hub"); }} />}
-        {mode === "post-cv" && <PostCv t={t} locale={locale} onDone={(m) => { flash(m); setMode("hub"); }} />}
+        {mode === "post-job" && <PostJob t={t} locale={locale} jobsOn={jobsOn} onDone={(m) => { flash(m); setMode("hub"); }} />}
+        {mode === "post-cv" && <PostCv t={t} locale={locale} jobsOn={jobsOn} onDone={(m) => { flash(m); setMode("hub"); }} />}
         {mode === "search" && (
           <SearchPane
             t={t}
@@ -162,6 +170,16 @@ function GenderPick({ value, onChange, withAny, t, label }: { value: string; onC
 function CountryPick({ label, values, onChange, single, locale, t, optional }: { label: string; values: string[]; onChange: (v: string[]) => void; single?: boolean; locale: Locale; t: (k: string) => string; optional?: boolean }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const boxRef = useRef<HTMLDivElement>(null);
+  // close the dropdown when tapping anywhere outside it
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
   const list = q ? COUNTRIES.filter((c) => c.ar.includes(q) || c.en.toLowerCase().includes(q.toLowerCase())) : COUNTRIES;
   const shown = values.length === 0
     ? t("country.search")
@@ -170,7 +188,7 @@ function CountryPick({ label, values, onChange, single, locale, t, optional }: {
     : `${values.length} ${t("ads.countries")}`;
 
   return (
-    <div className="mb-3">
+    <div className="mb-3" ref={boxRef}>
       <p className="mb-1.5 text-[12.5px] font-bold text-ink">
         {label}{optional && <span className="font-medium text-muted"> ({t("jobs.optional")})</span>}
       </p>
@@ -206,15 +224,19 @@ function CountryPick({ label, values, onChange, single, locale, t, optional }: {
   );
 }
 
-function PostJob({ t, locale, onDone }: { t: (k: string) => string; locale: Locale; onDone: (msg: string) => void }) {
+function PostJob({ t, locale, jobsOn, onDone }: { t: (k: string) => string; locale: Locale; jobsOn: boolean; onDone: (msg: string) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fee, setFee] = useState(1.99); // monthly posting fee from the dashboard
+  const [freeLeft, setFreeLeft] = useState(0); // free job-post credits gifted by the admin
+  const [payOpen, setPayOpen] = useState(false);
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json())
       .then((d) => { if (typeof d?.settings?.priceJobPost === "number") setFee(d.settings.priceJobPost); })
       .catch(() => {});
+    const tok = getAccessToken();
+    if (tok) apiGet<{ user: { freeJobPostLeft?: number } }>("/api/auth/me", tok).then((r) => { if (r.ok && r.data?.user) setFreeLeft(r.data.user.freeJobPostLeft ?? 0); });
   }, []);
 
   const [companyName, setCompanyName] = useState("");
@@ -301,24 +323,30 @@ function PostJob({ t, locale, onDone }: { t: (k: string) => string; locale: Loca
           {t("jobs.postFee")}: ${fee} · 30 {t("adm.days")}
         </p>
       )}
-      <button onClick={publish} disabled={!valid || busy} className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid && !busy ? "bg-brand-600" : "bg-slate-300"}`}>
+      <button onClick={() => { if (jobsOn && fee > 0 && freeLeft <= 0) setPayOpen(true); else publish(); }} disabled={!valid || busy} className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid && !busy ? "bg-brand-600" : "bg-slate-300"}`}>
         {t("jobs.publish")}
       </button>
+
+      {payOpen && <PaymentSheet amount={fee} onPaid={async () => { setPayOpen(false); await publish(); }} onClose={() => setPayOpen(false)} />}
     </div>
   );
 }
 
-function PostCv({ t, locale, onDone }: { t: (k: string) => string; locale: Locale; onDone: (msg: string) => void }) {
+function PostCv({ t, locale, jobsOn, onDone }: { t: (k: string) => string; locale: Locale; jobsOn: boolean; onDone: (msg: string) => void }) {
   const photoRef = useRef<HTMLInputElement>(null);
   const cvRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [cv, setCv] = useState<File | null>(null);
   const [fee, setFee] = useState(0.99); // monthly seeker-listing fee from the dashboard
+  const [freeLeft, setFreeLeft] = useState(0); // free seeker-ad credits gifted by the admin
+  const [payOpen, setPayOpen] = useState(false);
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json())
       .then((d) => { if (typeof d?.settings?.priceSeekerAd === "number") setFee(d.settings.priceSeekerAd); })
       .catch(() => {});
+    const tok = getAccessToken();
+    if (tok) apiGet<{ user: { freeSeekerLeft?: number } }>("/api/auth/me", tok).then((r) => { if (r.ok && r.data?.user) setFreeLeft(r.data.user.freeSeekerLeft ?? 0); });
   }, []);
 
   const [name, setName] = useState("");
@@ -405,9 +433,11 @@ function PostCv({ t, locale, onDone }: { t: (k: string) => string; locale: Local
           {t("jobs.seekerFee")}: ${fee} · 30 {t("adm.days")}
         </p>
       )}
-      <button onClick={submit} disabled={!valid || busy} className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid && !busy ? "bg-violet-600" : "bg-slate-300"}`}>
+      <button onClick={() => { if (jobsOn && fee > 0 && freeLeft <= 0) setPayOpen(true); else submit(); }} disabled={!valid || busy} className={`w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-colors ${valid && !busy ? "bg-violet-600" : "bg-slate-300"}`}>
         {t("jobs.send")}
       </button>
+
+      {payOpen && <PaymentSheet amount={fee} onPaid={async () => { setPayOpen(false); await submit(); }} onClose={() => setPayOpen(false)} />}
     </div>
   );
 }

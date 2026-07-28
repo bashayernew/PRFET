@@ -1,4 +1,4 @@
-# Auto-HTTPS for your domain. Replace with your real domain via the $DOMAIN env.
+# Auto-HTTPS for your domain. Set the real domain via the $DOMAIN env (deploy/.env).
 {$DOMAIN} {
 	reverse_proxy app:3000
 }

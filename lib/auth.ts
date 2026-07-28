@@ -16,13 +16,13 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   return bcrypt.compare(plain, hash);
 }
 
-/** One-time codes. In development we use a fixed code (1234) for easy testing.
- *  Set OTP_DEV_CODE=1 in the server .env to keep the fixed code in production
- *  (testing phase only — remove it once real email delivery is wired). */
-export const DEV_OTP = "1234";
+/** One-time codes — always a real random 4-digit code (leading zeros allowed).
+ *  Delivered to the user by email; there is no fixed/test code. */
 export function generateOtp(): string {
-  if (process.env.NODE_ENV !== "production" || process.env.OTP_DEV_CODE === "1") return DEV_OTP;
-  // 4-digit, leading zeros allowed
+  return crypto.randomInt(0, 10_000).toString().padStart(4, "0");
+}
+/** Alias kept for callers that request a delivered code explicitly. */
+export function randomOtp(): string {
   return crypto.randomInt(0, 10_000).toString().padStart(4, "0");
 }
 export function sha256(input: string): string {
@@ -108,6 +108,9 @@ export function publicUser(u: {
   isVerified: boolean;
   isAdmin: boolean;
   isOwner: boolean;
+  freeAdsLeft: number;
+  freeJobPostLeft: number;
+  freeSeekerLeft: number;
 }) {
   return {
     id: u.id,
@@ -149,6 +152,9 @@ export function publicUser(u: {
     isVerified: u.isVerified,
     isAdmin: u.isAdmin,
     isOwner: u.isOwner,
+    freeAdsLeft: u.freeAdsLeft ?? 0,
+    freeJobPostLeft: u.freeJobPostLeft ?? 0,
+    freeSeekerLeft: u.freeSeekerLeft ?? 0,
   };
 }
 

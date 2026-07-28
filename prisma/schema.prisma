@@ -64,6 +64,7 @@ model User {
   parentId      String? // this account is a branch of another (sponsor or any business)
   parent        User?   @relation("Branches", fields: [parentId], references: [id], onDelete: SetNull)
   branches      User[]  @relation("Branches")
+  branchLinks   Json    @default("[]") // admin-added branches as {id,name,url} tiles (no linked account)
   grantReqsBy   AdminGrantRequest[] @relation("GrantReqBy")
   grantReqsFor  AdminGrantRequest[] @relation("GrantReqFor")
   invoices      Invoice[]
@@ -109,6 +110,8 @@ model User {
   applications  JobApplication[]
   tickets       SupportTicket[]
   pushSubs      PushSubscription[]
+  profileViewsMade  ProfileView[] @relation("ProfileViewsMade")
+  profileViewsGot   ProfileView[] @relation("ProfileViewsGot")
 }
 
 model OtpCode {
@@ -340,6 +343,20 @@ model Story {
   @@index([expiresAt])
 }
 
+// Who viewed whose profile — one row per (viewer, target), refreshed on each visit.
+model ProfileView {
+  id        String   @id @default(cuid())
+  viewerId  String
+  viewer    User     @relation("ProfileViewsMade", fields: [viewerId], references: [id], onDelete: Cascade)
+  targetId  String
+  target    User     @relation("ProfileViewsGot", fields: [targetId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([viewerId, targetId])
+  @@index([targetId, updatedAt])
+}
+
 model StoryView {
   id        String   @id @default(cuid())
   storyId   String
@@ -541,6 +558,10 @@ model AppSettings {
   priceJobApply     Float @default(0) // fee to apply for a job (0 = free, per the client)
   priceJobPost      Float @default(1.99) // company job ad, per month
   priceSeekerAd     Float @default(0.99) // individual "looking for work" ad, per month
+  // Master on/off switches — a disabled feature disappears from the app entirely until re-enabled.
+  subEnabled  Boolean @default(true) // Premium subscription
+  adsEnabled  Boolean @default(true) // advertisements
+  jobsEnabled Boolean @default(true) // jobs marketplace (company posts + seeker ads)
   updatedAt      DateTime @updatedAt
 }
 

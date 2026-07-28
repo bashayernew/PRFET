@@ -20,14 +20,11 @@ export default function VerifyScreen() {
   const [seconds, setSeconds] = useState(30);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
     const e = localStorage.getItem("herot.pendingId");
     if (e) setIdentifier(e);
-    const dc = localStorage.getItem("herot.devCode");
-    if (dc) setDevCode(dc);
   }, []);
 
   async function handleVerify() {
@@ -40,7 +37,6 @@ export default function VerifyScreen() {
     );
     if (res.ok) {
       saveTokens(res.data);
-      localStorage.removeItem("herot.devCode");
       sessionStorage.removeItem("herot.regDraft"); // account done — drop the register draft
       router.push("/home");
       return;
@@ -53,11 +49,7 @@ export default function VerifyScreen() {
 
   async function doResend() {
     if (seconds > 0) return;
-    const res = await apiPost<{ devCode?: string }>("/api/auth/resend-otp", { identifier });
-    if (res.data?.devCode) {
-      setDevCode(res.data.devCode);
-      localStorage.setItem("herot.devCode", res.data.devCode);
-    }
+    await apiPost("/api/auth/resend-otp", { identifier });
     setDigits(Array(LEN).fill(""));
     setSeconds(30);
     setError(null);
@@ -139,13 +131,6 @@ export default function VerifyScreen() {
       >
         {t("verify.changeEmail")}
       </button>
-
-      {/* dev code hint (development only) */}
-      {devCode && (
-        <p className="mx-auto mt-3 rounded-xl bg-amber-50 px-3 py-1.5 text-center text-[12.5px] font-bold text-amber-700">
-          {t("verify.devHint")}: <span dir="ltr">{devCode}</span>
-        </p>
-      )}
 
       {/* OTP boxes */}
       <div dir="ltr" className="mt-8 flex justify-center gap-2.5">

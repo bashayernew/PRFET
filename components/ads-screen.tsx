@@ -21,6 +21,7 @@ import { COUNTRIES } from "@/lib/countries";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, apiDelete, apiUpload, getAccessToken } from "@/lib/api";
+import PaymentSheet from "@/components/payment-sheet";
 
 const DURATIONS = [1, 2, 3, 7, 15, 30];
 // COUNTRIES now sourced from lib/countries
@@ -74,6 +75,9 @@ export default function AdsScreen() {
   const [adBase, setAdBase] = useState(49.99);
   const [extraCountry, setExtraCountry] = useState(15);
   const [extraDay, setExtraDay] = useState(11);
+  const [freeLeft, setFreeLeft] = useState(0); // free ad credits gifted by the admin
+  const [payOpen, setPayOpen] = useState(false);
+  const [adsOn, setAdsOn] = useState(true); // dashboard switch: posting new ads on/off (feed stays either way)
 
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json())
@@ -82,8 +86,11 @@ export default function AdsScreen() {
         if (typeof s.priceAdBase === "number") setAdBase(s.priceAdBase);
         if (typeof s.priceAdExtraCountry === "number") setExtraCountry(s.priceAdExtraCountry);
         if (typeof s.priceAdExtraDay === "number") setExtraDay(s.priceAdExtraDay);
+        setAdsOn(s.adsEnabled !== false);
       })
       .catch(() => {});
+    const tok = getAccessToken();
+    if (tok) apiGet<{ user: { freeAdsLeft?: number } }>("/api/auth/me", tok).then((r) => { if (r.ok && r.data?.user) setFreeLeft(r.data.user.freeAdsLeft ?? 0); });
   }, []);
 
   const adTotal = (nCountries: number, days: number) =>
@@ -155,7 +162,7 @@ export default function AdsScreen() {
 
       {mode === "feed" ? (
         <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-4 pt-5">
-          {/* create CTA */}
+          {/* create CTA — always available; when the dashboard pauses paid ads, posting is just free */}
           <motion.button
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -454,13 +461,14 @@ export default function AdsScreen() {
 
           {/* pay */}
           <button
-            onClick={publish}
+            onClick={() => { if (adsOn && Number(total) > 0 && freeLeft <= 0) setPayOpen(true); else publish(); }}
             disabled={!fileObj && !caption.trim()}
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-l from-brand-700 to-brand-500 py-4 text-[15px] font-bold text-white shadow-[0_16px_30px_-10px_rgba(40,46,158,0.6)] disabled:from-slate-300 disabled:to-slate-300 disabled:shadow-none active:scale-[0.99]"
           >
-            {t("ads.pay")} · <span dir="ltr">${total}</span>
+            {adsOn ? <>{t("ads.pay")} · <span dir="ltr">${total}</span></> : t("ads.publishFree")}
           </button>
           {!fileObj && !caption.trim() && <p className="mt-2 text-center text-[12px] font-bold text-muted">{t("ads.needSomething")}</p>}
+          {payOpen && <PaymentSheet amount={Number(total)} onPaid={async () => { setPayOpen(false); await publish(); }} onClose={() => setPayOpen(false)} />}
         </div>
       )}
 

@@ -23,11 +23,15 @@ export default function SubscribeScreen() {
   // bundle prices from the dashboard + which bundle is picked
   const [months, setMonths] = useState<1 | 3 | 6 | 12>(1);
   const [tiers, setTiers] = useState<Record<number, number>>({ 1: 4.99, 3: 13.99, 6: 26.99, 12: 53.99 });
+  // when the dashboard closes subscriptions, only the 1-month plan remains
+  const [subOpen, setSubOpen] = useState(true);
 
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
         const s = d?.settings ?? {};
+        setSubOpen(s.subEnabled !== false);
+        if (s.subEnabled === false) setMonths(1);
         setTiers((prev) => ({
           1: typeof s.priceSubscription === "number" ? s.priceSubscription : prev[1],
           3: typeof s.priceSub3m === "number" ? s.priceSub3m : prev[3],
@@ -37,6 +41,8 @@ export default function SubscribeScreen() {
       })
       .catch(() => {});
   }, []);
+
+  const plans = subOpen ? ([1, 3, 6, 12] as const) : ([1] as const);
 
   const price = tiers[months];
 
@@ -100,9 +106,9 @@ export default function SubscribeScreen() {
             </div>
           </div>
 
-          {/* bundle picker — 1 / 3 / 6 / 12 months, dashboard-priced */}
-          <div className="mt-4 grid grid-cols-4 gap-2">
-            {([1, 3, 6, 12] as const).map((m) => (
+          {/* bundle picker — dashboard-priced; only 1-month when subscriptions are closed */}
+          <div className={`mt-4 grid gap-2 ${plans.length === 1 ? "grid-cols-1" : "grid-cols-4"}`}>
+            {plans.map((m) => (
               <button
                 key={m}
                 onClick={() => setMonths(m)}

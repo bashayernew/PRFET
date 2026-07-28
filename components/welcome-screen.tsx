@@ -30,7 +30,7 @@ export default function WelcomeScreen() {
       {/* brand */}
       <motion.div variants={up} custom={0} initial="hidden" animate="show" className="flex flex-col items-center text-center">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.jpg" alt="PRFET" className="h-auto w-[240px] max-w-[70%] object-contain" />
+        <img src="/prfet-logo.png" alt="PRFET" className="h-auto w-[260px] max-w-[75%] object-contain" />
         <p className="mt-6 text-[15px] font-bold text-ink">{t("welcome.tagline")}</p>
       </motion.div>
 
@@ -63,7 +63,7 @@ export default function WelcomeScreen() {
         onClick={() => {
           if (!account) return;
           localStorage.setItem("herot.accountType", account);
-          router.push("/country");
+          router.push("/register");
         }}
         className={`group mt-8 flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-base font-bold transition-all ${
           account ? "bg-gradient-to-l from-brand-700 to-brand-500 text-white shadow-[0_16px_30px_-10px_rgba(40,46,158,0.6)]" : "cursor-not-allowed bg-slate-100 text-slate-400"
