@@ -49,6 +49,7 @@ model User {
   // "لا أستقبل رسائل" — when true, only people on the allow-list can message me
   dmClosed       Boolean @default(false)
   hideTop        Boolean @default(false) // parental lock: hides the "most viewed" doorway
+  bleDiscoverable Boolean @default(false) // discoverable over Bluetooth (native app; privacy switch)
   // admin-granted freebies: a COUNT of free posts the admin gifted (decremented as used)
   freeAdsLeft     Int @default(0)
   freeJobPostLeft Int @default(0)
@@ -69,8 +70,9 @@ model User {
   grantReqsFor  AdminGrantRequest[] @relation("GrantReqFor")
   invoices      Invoice[]
 
-  // Premium (subscription) — unlocked by the $30 plan
+  // Premium (subscription)
   isPremium     Boolean   @default(false)
+  premiumTier   String    @default("basic") // "basic" | "vip" — VIP shows a gold badge
   premiumUntil  DateTime?
   textColor     String? // custom name/text colour (premium)
   shareLocation Boolean   @default(false) // location button on/off
@@ -79,6 +81,26 @@ model User {
   social1       String?
   social2       String?
   social3       String?
+
+  // AI monthly usage counters (reset when aiUsageMonth changes)
+  aiImagesUsed  Int     @default(0)
+  aiVideosUsed  Int     @default(0)
+  aiUsageMonth  String  @default("") // "YYYY-MM" the counters belong to
+  // Add-on top-ups bought this month (added on top of the tier cap; reset with the month)
+  aiImagesExtra Int     @default(0)
+  aiVideosExtra Int     @default(0)
+  aiMsgsUsed    Int     @default(0) // assistant messages this month (rolls over with aiUsageMonth)
+  aiMsgsExtra   Int     @default(0) // add-on message top-ups bought this month (rolls over too)
+  callSecondsUsed Int   @default(0) // AI-voice seconds spoken this month (rolls over with aiUsageMonth)
+  callSecondsExtra Int  @default(0) // add-on AI-voice top-ups (seconds) bought this month
+  storageBytesUsed BigInt @default(0) // total bytes of media the user has uploaded (cumulative)
+  storageBonusBytes BigInt @default(0) // extra storage from an add-on pack (adds to the cap)
+  storageBonusUntil DateTime? // when the storage add-on expires (null = none active)
+
+  // AI companion absence check-ins
+  lastSeenAt    DateTime? // updated whenever the member opens the app
+  checkin8Sent  Boolean  @default(false) // the 8h "are you there?" ping, sent once per absence
+  checkin24Sent Boolean  @default(false) // the 24h follow-up, sent once per absence
 
   isAdmin    Boolean  @default(false) // can open the admin dashboard
   isOwner    Boolean  @default(false) // THE owner — appoints admins, confirms their grants
@@ -112,6 +134,8 @@ model User {
   pushSubs      PushSubscription[]
   profileViewsMade  ProfileView[] @relation("ProfileViewsMade")
   profileViewsGot   ProfileView[] @relation("ProfileViewsGot")
+  aiMessages        AiMessage[]   @relation("AiMessages")
+  vaultItems        VaultItem[]
 }
 
 model OtpCode {
@@ -378,6 +402,7 @@ model Job {
   imageUrl    String? // optional ad image
   companyName String? // shown on the card (defaults to the account name)
   title       String // the role
+  description String? // free-text job description (optional; can be AI-written)
   catKey      String?
   typeKey     String   @default("full") // full | part | remote
   degree      String? // required degree
@@ -468,6 +493,7 @@ model Post {
 
   @@index([userId])
   @@index([createdAt])
+  @@index([repostOfId])
 }
 
 model PostLike {
@@ -547,14 +573,15 @@ model AppSettings {
   sponsorUserId String @default("") // the sponsor's in-app account, when they have one
   // Pricing — all USD, editable from the dashboard. Rooms carry no price of
   // their own: they are part of the Premium subscription.
-  priceSubscription Float @default(4.99) // Premium, 1 month
+  priceSubscription Float @default(4.99) // Premium Basic, 1 month
   priceSub3m        Float @default(13.99) // 3-month bundle
   priceSub6m        Float @default(26.99) // 6-month bundle
   priceSub12m       Float @default(53.99) // 1-year bundle
+  priceVip          Float @default(9.99) // Premium VIP, 1 month (gold badge)
   // Ads: the base price buys 1 country + 1 day; each extra country/day adds its increment.
-  priceAdBase         Float @default(49.99)
-  priceAdExtraCountry Float @default(15)
-  priceAdExtraDay     Float @default(11)
+  priceAdBase         Float @default(14.99)
+  priceAdExtraCountry Float @default(1)
+  priceAdExtraDay     Float @default(2)
   priceJobApply     Float @default(0) // fee to apply for a job (0 = free, per the client)
   priceJobPost      Float @default(1.99) // company job ad, per month
   priceSeekerAd     Float @default(0.99) // individual "looking for work" ad, per month
@@ -562,6 +589,41 @@ model AppSettings {
   subEnabled  Boolean @default(true) // Premium subscription
   adsEnabled  Boolean @default(true) // advertisements
   jobsEnabled Boolean @default(true) // jobs marketplace (company posts + seeker ads)
+  aiEnabled   Boolean @default(true) // the AI assistant
+  /// The assistant is a paid perk: free members are shown a subscribe prompt instead.
+  /// Set to false to open it to everyone.
+  aiPremiumOnly Boolean @default(true)
+  /// Monthly AI usage caps per tier (0 = unlimited). Reset each calendar month.
+  aiImagesBasic Int @default(35)  // images/month for a Basic subscriber (and free users)
+  aiImagesVip   Int @default(100) // images/month for a VIP subscriber
+  aiVideosBasic Int @default(9)   // videos/month for a Basic subscriber (and free users)
+  aiVideosVip   Int @default(20)  // videos/month for a VIP subscriber
+  /// Monthly AI-assistant message caps per tier (0 = unlimited). Reset each calendar month.
+  aiMessagesBasic Int @default(4000) // assistant messages/month for a Golden (basic) subscriber
+  aiMessagesVip   Int @default(7500) // assistant messages/month for a VIP subscriber
+  /// Total media-storage caps per tier, in GB (0 = unlimited). Cumulative — never resets.
+  storageGbBasic Int @default(25) // storage (GB) for a Golden subscriber
+  storageGbVip   Int @default(50) // storage (GB) for a VIP subscriber
+  /// Monthly AI-voice caps per tier, in minutes (0 = unlimited). Reset each calendar month.
+  /// This is time spent talking to the AI assistant — user-to-user calls are always free.
+  callMinutesBasic Int @default(2000) // AI-voice minutes/month for a Golden subscriber
+  callMinutesVip   Int @default(480)  // AI-voice minutes/month for a VIP subscriber
+  /// The personal vault feature (save phone numbers/notes). Off = hidden everywhere.
+  vaultEnabled Boolean @default(true)
+  /// Buyable add-on pack prices (USD), editable from the dashboard.
+  /// voice = +120 AI-voice min (1 mo); media = +5 images/+2 videos/+200 messages (1 mo);
+  /// storage = +25 GB (3 mo). What each pack grants lives in code (lib/ai-usage.ts).
+  priceAddonVoice   Float @default(1.99)
+  priceAddonMedia   Float @default(1.99)
+  priceAddonStorage Float @default(1.99)
+  /// Second lock on the dashboard: even a signed-in admin must type this to get in.
+  /// bcrypt hash; empty means the built-in starter password is still in use.
+  adminPassHash String @default("")
+  /// Email the dashboard password is tied to — where verification codes are sent.
+  dashEmail        String @default("")
+  dashPendingEmail String @default("") // an email awaiting verification (change-email flow)
+  dashOtpHash      String @default("") // bcrypt of the current verification code
+  dashOtpExp       DateTime? // when that code expires
   updatedAt      DateTime @updatedAt
 }
 
@@ -624,4 +686,33 @@ model DmAllow {
 
   @@unique([userId, targetId])
   @@index([userId])
+}
+
+/// One turn of the AI assistant conversation.
+/// Deliberately NOT kept forever: each reply prunes the user's history back to the most
+/// recent MAX_KEPT turns, so the thread survives reloads and gives the model context,
+/// but old conversations age out instead of growing without limit.
+/// A subscriber's private vault entry — anything they want to keep handy
+/// (phone numbers, notes, codes). Only the owner can ever read these back.
+model VaultItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   // a label the user gives it, e.g. "Bank card" or "Ahmad's number"
+  body      String   // the saved content
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model AiMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("AiMessages", fields: [userId], references: [id], onDelete: Cascade)
+  role      String // "user" | "model"
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

@@ -1,5 +1,7 @@
 # Auto-HTTPS for your domain. Set the real domain via the $DOMAIN env (deploy/.env).
 {$DOMAIN} {
+	# Compress all text/JSON/JS/CSS responses — big transfer-size win, invisible to users.
+	encode zstd gzip
 	reverse_proxy app:3000
 }
 

@@ -92,7 +92,9 @@ export function publicUser(u: {
   showAddress: boolean;
   dmClosed: boolean;
   hideTop: boolean;
+  bleDiscoverable: boolean;
   isPremium: boolean;
+  premiumTier?: string;
   premiumUntil: Date | null;
   autoRenew: boolean;
   renewMonths: number;
@@ -136,7 +138,9 @@ export function publicUser(u: {
     showAddress: u.showAddress,
     dmClosed: u.dmClosed,
     hideTop: u.hideTop,
+    bleDiscoverable: u.bleDiscoverable,
     isPremium: u.isPremium,
+    premiumTier: u.premiumTier ?? "basic",
     premiumUntil: u.premiumUntil,
     autoRenew: u.autoRenew,
     renewMonths: u.renewMonths,

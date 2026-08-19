@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Search, Star, MapPin } from "lucide-react";
+import { Search, Star, MapPin, Bluetooth } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { catIcon } from "@/lib/cat-icons";
 import BottomNav from "@/components/bottom-nav";
@@ -40,6 +40,37 @@ export default function DiscoverScreen() {
   const [searched, setSearched] = useState(false); // has the user pressed Search yet?
   // false = we don't know where this phone is, so no distance can be shown
   const [hasOrigin, setHasOrigin] = useState(true);
+
+  // --- Bluetooth (BLE) discovery ---------------------------------------------------------
+  // The scanning/advertising runs in the NATIVE app, which injects `window.PrfetNative`
+  // ({ bleStart, bleStop }) and calls `window.__prfetBleFound([{id,distance}])` as it finds
+  // nearby people. In the plain web browser there's no radio, so we show an "in the app" note.
+  type BlePerson = { id: string; displayName: string; avatarUrl: string | null; category: string | null; accountType: string; isPremium?: boolean; textColor?: string | null; distance: number | null };
+  const [bleOn, setBleOn] = useState(false);
+  const [blePeople, setBlePeople] = useState<BlePerson[]>([]);
+  const [bleUnsupported, setBleUnsupported] = useState(false);
+
+  function toggleBle() {
+    const native = (window as unknown as { PrfetNative?: { bleStart?: () => void; bleStop?: () => void } }).PrfetNative;
+    if (!native?.bleStart) { setBleUnsupported(true); return; }
+    const w = window as unknown as { __prfetBleFound?: (arr: { id: string; distance?: number }[]) => void };
+    if (bleOn) { native.bleStop?.(); w.__prfetBleFound = undefined; setBleOn(false); return; }
+    setBleUnsupported(false);
+    w.__prfetBleFound = async (arr) => {
+      const res = await apiPost<{ people: BlePerson[] }>("/api/search/ble-discovered", { found: arr }, getAccessToken() || undefined);
+      if (res.ok && res.data?.people) setBlePeople(res.data.people);
+    };
+    setBlePeople([]);
+    native.bleStart();
+    setBleOn(true);
+  }
+
+  // Never leave the radio running when the page unmounts.
+  useEffect(() => () => {
+    const native = (window as unknown as { PrfetNative?: { bleStop?: () => void } }).PrfetNative;
+    native?.bleStop?.();
+    (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
+  }, []);
 
   // Search runs on demand — by name, by distance, or both. The server does the filtering,
   // measuring from where this phone actually is.
@@ -120,11 +151,54 @@ export default function DiscoverScreen() {
           >
             <Search className="h-4 w-4" /> {t("discover.search")}
           </button>
+
+          {/* Bluetooth search toggle — finds people right next to you (native app) */}
+          <button
+            onClick={toggleBle}
+            aria-label={t("ble.search")}
+            className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-white/20 active:scale-95 ${bleOn ? "bg-white text-brand-700" : "bg-white/10 text-white"}`}
+          >
+            <Bluetooth className="h-4.5 w-4.5" />
+          </button>
         </div>
       </div>
 
       {/* results */}
       <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-4 pt-4">
+        {bleUnsupported && (
+          <div className="mb-3 flex items-center gap-2 rounded-2xl bg-brand-50 px-3.5 py-3 ring-1 ring-brand-100">
+            <Bluetooth className="h-4 w-4 shrink-0 text-brand-600" />
+            <span className="flex-1 text-[12.5px] font-bold leading-snug text-brand-700">{t("ble.appOnly")}</span>
+          </div>
+        )}
+        {bleOn && (
+          <div className="mb-5">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-brand-500" />
+              <h2 className="text-[15px] font-extrabold text-ink">{t("ble.nearbyNow")}</h2>
+              <span className="text-[12.5px] font-bold text-muted">{ld(blePeople.length, locale)}</span>
+            </div>
+            {blePeople.length === 0 ? (
+              <p className="py-6 text-center text-[13px] font-medium text-muted">{t("ble.scanning")}</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {blePeople.map((p) => (
+                  <Link key={p.id} href={`/business/${p.id}`} className="flex items-center gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-100 active:scale-[0.99]">
+                    <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-50 text-[15px] font-extrabold text-brand-600">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {p.avatarUrl ? <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" /> : (p.displayName || "•").charAt(0).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-extrabold text-ink" style={vipStyle({ isPremium: p.isPremium, textColor: p.textColor })}>{p.displayName}</span>
+                      {p.category && <span className="block truncate text-[11.5px] font-medium text-muted">{t(p.category)}</span>}
+                    </span>
+                    {p.distance != null && <span className="shrink-0 text-[11.5px] font-bold text-brand-600">≈ {ld(Math.round(p.distance), locale)} {t("home.m")}</span>}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {!hasOrigin && (
           <button onClick={enableLocation} className="mb-3 flex w-full items-center gap-2 rounded-2xl bg-amber-50 px-3.5 py-3 text-start ring-1 ring-amber-200 active:scale-[0.99]">
             <MapPin className="h-4 w-4 shrink-0 text-amber-600" />

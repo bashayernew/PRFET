@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mic, MicOff, Hand, PhoneOff, Video, VideoOff, X, MessageSquare, Ban, Crown, Users,
-  Share2, Check, ShieldAlert, MonitorUp, Monitor, KeyRound, Bell, Send,
+  Share2, Check, ShieldAlert, MonitorUp, Monitor, Bell, Send,
 } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
@@ -31,7 +31,6 @@ type ApiP = {
 };
 
 const ringFor = (s: State) => (s === "talking" ? "ring-emerald-400" : s === "requesting" ? "ring-amber-400" : "ring-red-400");
-const dotFor = (s: State) => (s === "talking" ? "bg-emerald-400" : s === "requesting" ? "bg-amber-400" : "bg-red-400");
 
 type ChatMsg = { userId: string; name: string; avatarUrl: string | null; body: string; at: number };
 type Sock = { on: (e: string, cb: (p: never) => void) => void; off: (e: string) => void; emit: (e: string, p: unknown) => void };
@@ -41,19 +40,18 @@ type JoinReq = { userId: string; name: string; avatarUrl: string | null };
 
 export default function MeetingRoomScreen({ id }: { id: string }) {
   const router = useRouter();
-  const search = useSearchParams();
   const { t, dir, locale } = useI18n();
   const ready = useRequireAuth();
 
   const [access, setAccess] = useState<Access>("loading");
   const [hostInfo, setHostInfo] = useState<{ id: string; name: string; avatarUrl: string | null } | null>(null);
   const [myJoinStatus, setMyJoinStatus] = useState<string | null>(null);
+  const [privacy, setPrivacy] = useState("public");
+  const [myId, setMyId] = useState("");
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
   const [joinReqs, setJoinReqs] = useState<JoinReq[]>([]);
   const [reqBoxOpen, setReqBoxOpen] = useState(false);
-  const [shareAsk, setShareAsk] = useState(false);
-  const [shareCode, setShareCode] = useState("");
-  const [shareErr, setShareErr] = useState<string | null>(null);
-  const [roomCode, setRoomCode] = useState<string | null>(null);
   const [people, setPeople] = useState<P[]>([]);
   const [amAdmin, setAmAdmin] = useState(false);
   const [title, setTitle] = useState("");
@@ -69,21 +67,19 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   const [tracks, setTracks] = useState<StageTrack[]>([]);
   const [stageAsk, setStageAsk] = useState<{ userId: string; name: string; kind: "video" | "screen" } | null>(null);
   const [maxSeats, setMaxSeats] = useState(20);
-  const [chatOpen, setChatOpen] = useState(false);
   const [chat, setChat] = useState<ChatMsg[]>([]);
   const [chatText, setChatText] = useState("");
-  const [unread, setUnread] = useState(0);
   const roomRef = useRef<LkRoom | null>(null);
   const sockRef = useRef<Sock | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const meRef = useRef(""); // current user id, for the chat socket closure
 
-  const host = people.find((p) => p.host) ?? null;
   const others = people.filter((p) => !p.host);
-  const stageTracks = tracks.slice(0, 2);
+  const stageTracks = tracks.slice(0, 4);
 
   const load = useCallback(async () => {
     const token = getAccessToken() || undefined;
-    const res = await apiGet<{ meeting: { title: string; hostId: string; hostName: string; hostAvatar: string | null; allowRecording: boolean; maxSeats: number; access: Access; myJoinStatus: string | null; pendingJoins: JoinReq[]; participants: ApiP[] } }>(`/api/meetings/${id}`, token);
+    const res = await apiGet<{ meeting: { title: string; hostId: string; hostName: string; hostAvatar: string | null; allowRecording: boolean; maxSeats: number; access: Access; myJoinStatus: string | null; pendingJoins: JoinReq[]; participants: ApiP[]; privacy?: string } }>(`/api/meetings/${id}`, token);
     if (!res.ok || !res.data?.meeting) return;
     const m = res.data.meeting;
     setTitle(m.title);
@@ -92,15 +88,14 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     setHostInfo({ id: m.hostId, name: m.hostName, avatarUrl: m.hostAvatar });
     setMyJoinStatus(m.myJoinStatus ?? null);
     setJoinReqs(m.pendingJoins ?? []);
+    setPrivacy(m.privacy ?? "public");
 
-    // The owner's share link carries the code — join straight away.
-    const linkCode = search.get("c");
-    if (m.access === "none" && linkCode && token) {
-      const j = await apiPost<{ ok: boolean }>(`/api/meetings/${id}/join`, { code: linkCode }, token);
-      if (j.ok) { setAccess("member"); }
-      else setAccess("none");
+    if (m.access === "none" && m.privacy === "public" && token) {
+      // Public rooms are open — walk straight in (text on; mic/cam/screen ask the host).
+      const j = await apiPost<{ ok: boolean }>(`/api/meetings/${id}/join`, {}, token);
+      setAccess(j.ok ? "member" : "none");
     } else if (m.access === "approved" && token) {
-      // host already said yes — walk in without a code
+      // Friends/private: the host approved — walk in.
       const j = await apiPost<{ ok: boolean }>(`/api/meetings/${id}/join`, {}, token);
       setAccess(j.ok ? "member" : "none");
     } else {
@@ -116,6 +111,8 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     const me = token ? await apiGet<{ user: { id: string } }>("/api/auth/me", token) : null;
     if (me?.ok && me.data?.user) {
       const uid = me.data.user.id;
+      setMyId(uid);
+      meRef.current = uid;
       setAmAdmin(m.hostId === uid);
       const mine = m.participants.find((p) => p.id === uid);
       if (mine) {
@@ -123,7 +120,7 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         setMyWant((mine.wants as Want) ?? null);
       }
     }
-  }, [id, search]);
+  }, [id]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
 
@@ -169,6 +166,13 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     return () => { document.removeEventListener("visibilitychange", onVis); setSecureScreen(false); };
   }, [ready, noRecording, id]);
 
+  // Once we're a confirmed member, (re)announce to the socket room. The socket usually
+  // connects BEFORE the auto-join creates the participant row, so that first meeting:join was
+  // rejected and live comments only started after a reload. This re-fires it at the right time.
+  useEffect(() => {
+    if (access === "member" || access === "host") sockRef.current?.emit("meeting:join", { meetingId: id });
+  }, [access, id]);
+
   useEffect(() => {
     if (!ready) return;
     const token = getAccessToken();
@@ -183,8 +187,9 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
       sock.emit("meeting:join", { meetingId: id });
       sock.on("meeting:chat", (p: { meetingId?: string; userId?: string; name?: string; avatarUrl?: string | null; body?: string; at?: number }) => {
         if (p?.meetingId !== id || !p.body) return;
+        // My own messages are shown instantly by sendChat — ignore the echo so they don't double.
+        if (p.userId && p.userId === meRef.current) return;
         setChat((c) => [...c, { userId: p.userId ?? "", name: p.name ?? "", avatarUrl: p.avatarUrl ?? null, body: p.body!, at: p.at ?? Date.now() }]);
-        setUnread((n) => n + 1);
       });
       sock.on("meeting:ended", (p: { meetingId?: string }) => {
         if (p?.meetingId === id) { alert(t("meet.ended")); router.push("/meetings"); }
@@ -247,29 +252,9 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     } catch { /* unavailable */ }
   }
 
-  // Owner: link carries the code, so the recipient walks straight in.
-  // Member: must prove they know the code before they can share a (plain) link.
-  async function shareRoom() {
-    const base = `${window.location.origin}/meetings/${id}`;
-    if (amAdmin) {
-      const code = roomCode ?? (await (async () => {
-        const r = await apiGet<{ code: string }>(`/api/meetings/${id}/code`, getAccessToken() || undefined);
-        const c = r.ok && r.data?.code ? r.data.code : null;
-        setRoomCode(c);
-        return c;
-      })());
-      pushLink(code ? `${base}?c=${code}` : base);
-      return;
-    }
-    setShareAsk(true);
-    setShareCode("");
-    setShareErr(null);
-  }
-
-  async function confirmShare() {
-    const r = await apiPost<{ ok: boolean }>(`/api/meetings/${id}/verify-code`, { code: shareCode.trim() }, getAccessToken() || undefined);
-    if (!r.ok) { setShareErr(t("meet.badCode")); return; }
-    setShareAsk(false);
+  // No codes anymore — sharing just copies the plain room link. Public opens on tap;
+  // friends/private send the recipient to the gate to ask the host for approval.
+  function shareRoom() {
     pushLink(`${window.location.origin}/meetings/${id}`);
   }
 
@@ -287,7 +272,8 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
 
   async function grant(userId: string, kind: "audio" | "video" | "text" | "screen", allow: boolean, mode?: "solo" | "split") {
     setPeople((ps) => ps.map((p) => (p.id === userId ? { ...p, wants: null } : p)));
-    await apiPost(`/api/meetings/${id}/grant`, { userId, kind, allow, mode }, getAccessToken() || undefined);
+    const res = await apiPost<{ error?: string }>(`/api/meetings/${id}/grant`, { userId, kind, allow, mode }, getAccessToken() || undefined);
+    if (!res.ok && res.data?.error === "stage_full") { setNote(t("meet.stageFull")); setTimeout(() => setNote(null), 2600); }
     load();
   }
 
@@ -299,6 +285,7 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   }
 
   function toggleMic() {
+    roomRef.current?.startAudio(); // unlock audio playback on iOS
     if (!amAdmin && !myCan.audio) { request("audio"); return; }
     setMyState((s) => {
       const next: State = s === "talking" ? "muted" : "talking";
@@ -316,13 +303,17 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   }
 
   useEffect(() => {
-    if (chatOpen) chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chat, chatOpen]);
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [chat]);
 
   function sendChat() {
     const body = chatText.trim();
     if (!body) return;
+    roomRef.current?.startAudio(); // this tap doubles as the iOS "enable sound" unlock
     sockRef.current?.emit("meeting:chat", { meetingId: id, body });
+    // Show my own comment instantly — the server echo is ignored (see the chat handler).
+    const mine = people.find((p) => p.id === myId);
+    setChat((c) => [...c, { userId: myId, name: mine?.name || t("meet.you"), avatarUrl: mine?.avatarUrl ?? null, body, at: Date.now() }]);
     setChatText("");
   }
   function toggleVideo() {
@@ -350,6 +341,7 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
       <RoomGate
         id={id}
         title={title}
+        privacy={privacy}
         hostId={hostInfo?.id ?? ""}
         hostName={hostInfo?.name ?? ""}
         hostAvatar={hostInfo?.avatarUrl ?? null}
@@ -363,15 +355,19 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   const pending = others.filter((p) => p.wants);
 
   return (
-    <div dir={dir} className="mx-auto flex h-[100dvh] max-w-[480px] flex-col bg-slate-900 text-white">
+    <div dir={dir} className="relative mx-auto flex h-[100dvh] max-w-[480px] flex-col bg-[#1b1440] text-white">
       <div className="flex items-center gap-3 px-5 pb-2 pt-[calc(env(safe-area-inset-top)+14px)]">
         <div className="min-w-0 flex-1">
           <p className="truncate text-[16px] font-extrabold">{title || t("meet.roomTitle")}</p>
-          <p className="flex items-center gap-1.5 text-[11.5px] font-medium text-slate-400">
-            <Users className="h-3.5 w-3.5" /> {ld(people.length, locale)}/{ld(maxSeats, locale)}
-            {amAdmin && <span className="ms-1 inline-flex items-center gap-1 rounded-full bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold text-amber-300"><Crown className="h-3 w-3" /> {t("meet.admin")}</span>}
-          </p>
+          {/* owner's name — tap to open their profile */}
+          <button onClick={() => hostInfo?.id && router.push(`/business/${hostInfo.id}`)} className="flex max-w-full items-center gap-1 truncate text-[11.5px] font-bold text-amber-300 active:opacity-80">
+            <Crown className="h-3 w-3 shrink-0" /> <span className="truncate">{hostInfo?.name || t("meet.host")}</span>
+          </button>
         </div>
+        <button onClick={() => setRosterOpen(true)} aria-label={t("meet.people")} className="relative grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white active:scale-95">
+          <Users className="h-5 w-5" />
+          <span className="absolute -end-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[9px] font-extrabold text-white ring-2 ring-[#1b1440]">{ld(people.length, locale)}</span>
+        </button>
         <button onClick={shareRoom} aria-label={t("meet.invite")} className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white active:scale-95">
           {copied ? <Check className="h-5 w-5 text-emerald-400" /> : <Share2 className="h-5 w-5" />}
         </button>
@@ -394,38 +390,33 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         </div>
       )}
 
-      {host && (
-        <div className="relative flex flex-col items-center pb-3">
-          {/* host's join-request inbox — sits next to the name */}
-          {amAdmin && (
-            <button
-              onClick={() => setReqBoxOpen((o) => !o)}
-              aria-label={t("meet.joinRequests")}
-              className={`absolute end-5 top-0 grid h-9 w-9 place-items-center rounded-full active:scale-95 ${joinReqs.length ? "bg-amber-400 text-amber-950" : "bg-white/10 text-white"}`}
-            >
-              <Bell className="h-4.5 w-4.5" />
-              {joinReqs.length > 0 && (
-                <span className="absolute -end-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] font-extrabold text-white ring-2 ring-slate-900">
-                  {joinReqs.length}
-                </span>
-              )}
-            </button>
-          )}
-          {amAdmin && reqBoxOpen && (
-            <div className="absolute end-5 top-11 z-40 w-64 overflow-hidden rounded-2xl bg-white text-ink shadow-xl">
+      {/* host's join-request inbox — compact, no big avatar circle */}
+      {amAdmin && (
+        <div className="relative px-5 pb-1">
+          <button
+            onClick={() => setReqBoxOpen((o) => !o)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-bold active:scale-95 ${joinReqs.length ? "bg-amber-400 text-amber-950" : "bg-white/10 text-white"}`}
+          >
+            <Bell className="h-4 w-4" /> {t("meet.joinRequests")}
+            {joinReqs.length > 0 && (
+              <span className="grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] font-extrabold text-white">{joinReqs.length}</span>
+            )}
+          </button>
+          {reqBoxOpen && (
+            <div className="absolute start-5 top-10 z-40 w-64 overflow-hidden rounded-2xl bg-white text-ink shadow-xl">
               <p className="border-b border-slate-100 px-3 py-2 text-[12px] font-extrabold">{t("meet.joinRequests")}</p>
               {joinReqs.length === 0 ? (
                 <p className="px-3 py-3 text-[12px] font-medium text-muted">{t("meet.noJoinRequests")}</p>
               ) : (
                 joinReqs.map((r) => (
                   <div key={r.userId} className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 last:border-0">
-                    <button onClick={() => router.push(`/business/${r.userId}`)} className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-50 text-[12px] font-extrabold text-brand-600">
+                    <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-50 text-[12px] font-extrabold text-brand-600">
                       {r.avatarUrl ? (
                         <img src={r.avatarUrl} alt="" className="h-full w-full object-cover" />
                       ) : (
                         (r.name || "•").charAt(0).toUpperCase()
                       )}
-                    </button>
+                    </span>
                     <span className="min-w-0 flex-1 truncate text-[12.5px] font-bold">{r.name}</span>
                     <button onClick={() => decideJoin(r.userId, true)} className="rounded-lg bg-emerald-500 px-2 py-1 text-[11px] font-bold text-white">{t("meet.allow")}</button>
                     <button onClick={() => decideJoin(r.userId, false)} className="rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-bold text-muted">{t("meet.deny")}</button>
@@ -434,94 +425,96 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
               )}
             </div>
           )}
-          <button onClick={() => (amAdmin ? setSel(host) : router.push(`/business/${host.id}`))} className="flex flex-col items-center gap-1.5">
-            <span className={`relative grid h-[72px] w-[72px] place-items-center overflow-hidden rounded-full bg-slate-700 text-[24px] font-extrabold ring-[3px] ${ringFor(host.state)}`}>
-              {host.avatarUrl ? (
-                <img src={host.avatarUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                host.name.charAt(0).toUpperCase()
-              )}
-              <span className={`absolute -bottom-0.5 -end-0.5 grid h-6 w-6 place-items-center rounded-full ring-2 ring-slate-900 ${dotFor(host.state)}`}>
-                {host.state === "talking" ? <Mic className="h-3 w-3 text-emerald-900" /> : <MicOff className="h-3 w-3 text-red-900" />}
-              </span>
-            </span>
-            <span className="flex items-center gap-1 text-[13px] font-extrabold text-white">
-              <Crown className="h-3.5 w-3.5 text-amber-400" /> {host.name}
-            </span>
-          </button>
         </div>
       )}
 
-      <div className="mx-5 mb-3 overflow-hidden rounded-3xl bg-black ring-1 ring-white/10">
+      {/* full-screen live stage — the video/screen fills the space and splits for 2/3/4 sharers */}
+      <div className="relative flex-1 overflow-hidden bg-black">
         {stageTracks.length === 0 ? (
-          <div className="grid h-40 place-items-center text-center">
+          <div className="grid h-full place-items-center text-center">
             <div>
-              <Monitor className="mx-auto h-7 w-7 text-slate-600" />
-              <p className="mt-1 text-[11.5px] font-bold text-slate-500">{t("meet.stageEmpty")}</p>
+              <Monitor className="mx-auto h-8 w-8 text-slate-600" />
+              <p className="mt-1.5 text-[12px] font-bold text-slate-500">{t("meet.stageEmpty")}</p>
             </div>
           </div>
         ) : (
-          <div className={`grid h-48 ${stageTracks.length === 2 ? "grid-cols-2 gap-0.5" : "grid-cols-1"}`}>
+          <div className={`grid h-full w-full gap-0.5 ${stageTracks.length === 1 ? "grid-cols-1 grid-rows-1" : stageTracks.length === 2 ? "grid-cols-1 grid-rows-2" : "grid-cols-2 grid-rows-2"}`}>
             {stageTracks.map((tk) => (
               <StageTile key={`${tk.identity}-${tk.source}`} track={tk} name={people.find((p) => p.id === tk.identity)?.name ?? ""} />
             ))}
           </div>
         )}
+
+        {/* host: pending mic/camera/screen requests — overlaid at the top of the stage */}
+        {amAdmin && pending.length > 0 && (
+          <div className="absolute inset-x-0 top-0 z-20 flex flex-col gap-1.5 p-3">
+            {pending.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 rounded-2xl bg-black/60 px-3 py-2 backdrop-blur">
+                <Hand className="h-4 w-4 shrink-0 text-amber-300" />
+                <p className="flex-1 truncate text-[12px] font-bold text-amber-200">
+                  {p.name} — {t(p.wants === "audio" ? "meet.wantsMic" : p.wants === "video" ? "meet.wantsVideo" : p.wants === "screen" ? "meet.wantsScreen" : "meet.wantsText")}
+                </p>
+                <button
+                  onClick={() => {
+                    if (p.wants === "video" || p.wants === "screen") setStageAsk({ userId: p.id, name: p.name, kind: p.wants });
+                    else grant(p.id, p.wants as "audio" | "text", true);
+                  }}
+                  className="shrink-0 rounded-lg bg-emerald-500 px-2.5 py-1 text-[11.5px] font-bold text-white active:scale-95"
+                >
+                  {t("meet.allow")}
+                </button>
+                <button onClick={() => grant(p.id, p.wants as "audio" | "video" | "text" | "screen", false)} className="shrink-0 rounded-lg bg-white/15 px-2.5 py-1 text-[11.5px] font-bold text-white/80 active:scale-95">
+                  {t("meet.deny")}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Live comments — float over the video, scrollable, newest at the bottom, display-only */}
+        <div className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/70 via-black/20 to-transparent pt-16">
+          <div className="no-scrollbar flex max-h-[42dvh] flex-col overflow-y-auto overscroll-contain px-4 pb-2">
+            {/* mt-auto pins the newest to the bottom when short, but still lets you scroll UP
+                when there are many — `justify-end` here used to clip the top and kill scroll. */}
+            <div className="mt-auto flex flex-col gap-1.5">
+              {chat.map((m, i) => (
+                <div key={`c-${m.userId}-${m.at}-${i}`} className="flex items-start gap-2">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-600 text-[10px] font-extrabold text-white">
+                    {m.avatarUrl ? (
+                      <img src={m.avatarUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      (m.name || "•").charAt(0).toUpperCase()
+                    )}
+                  </span>
+                  <p className="text-[12.5px] leading-snug text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.8)]">
+                    <span className="font-extrabold">{m.name}</span>{" "}
+                    <span className="font-medium text-white/90">{m.body}</span>
+                  </p>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {amAdmin && pending.length > 0 && (
-        <div className="mx-5 mb-2 flex flex-col gap-1.5">
-          {pending.map((p) => (
-            <div key={p.id} className="flex items-center gap-2 rounded-2xl bg-amber-400/15 px-3 py-2">
-              <Hand className="h-4 w-4 shrink-0 text-amber-300" />
-              <p className="flex-1 truncate text-[12px] font-bold text-amber-200">
-                {p.name} — {t(p.wants === "audio" ? "meet.wantsMic" : p.wants === "video" ? "meet.wantsVideo" : p.wants === "screen" ? "meet.wantsScreen" : "meet.wantsText")}
-              </p>
-              <button
-                onClick={() => {
-                  if (p.wants === "video" || p.wants === "screen") setStageAsk({ userId: p.id, name: p.name, kind: p.wants });
-                  else grant(p.id, p.wants as "audio" | "text", true);
-                }}
-                className="shrink-0 rounded-lg bg-emerald-500 px-2.5 py-1 text-[11.5px] font-bold text-white active:scale-95"
-              >
-                {t("meet.allow")}
-              </button>
-              <button onClick={() => grant(p.id, p.wants as "audio" | "video" | "text" | "screen", false)} className="shrink-0 rounded-lg bg-white/10 px-2.5 py-1 text-[11.5px] font-bold text-slate-300 active:scale-95">
-                {t("meet.deny")}
-              </button>
-            </div>
-          ))}
+      {/* comment input — always visible when allowed, like Instagram Live */}
+      {(myCan.text || amAdmin) && (
+        <div className="z-30 flex items-center gap-2 bg-[#1b1440] px-4 pb-2 pt-1">
+          <input
+            value={chatText}
+            onChange={(e) => setChatText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
+            placeholder={t("meet.chatHint")}
+            className="h-10 flex-1 rounded-full bg-white/10 px-4 text-[13.5px] font-medium text-white outline-none placeholder:text-slate-400"
+          />
+          <button onClick={sendChat} disabled={!chatText.trim()} aria-label={t("chat.send")} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-600 text-white disabled:opacity-40 active:scale-95">
+            <Send className={`h-5 w-5 ${dir === "rtl" ? "-scale-x-100" : ""}`} />
+          </button>
         </div>
       )}
 
-      <div className="flex items-center justify-center gap-4 px-5 pb-1 text-[10.5px] font-medium text-slate-400">
-        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-400" /> {t("meet.talking")}</span>
-        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-400" /> {t("meet.muted")}</span>
-        <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-400" /> {t("meet.wantsTalk")}</span>
-      </div>
-
-      <div className="no-scrollbar flex-1 overflow-y-auto px-5 py-2">
-        <div className="grid grid-cols-4 gap-3">
-          {others.map((p) => (
-            <button key={p.id} onClick={() => (amAdmin ? setSel(p) : router.push(`/business/${p.id}`))} className="flex flex-col items-center gap-1.5">
-              <span className={`relative grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-slate-700 text-[17px] font-extrabold ring-2 ${p.blocked ? "opacity-40 ring-slate-600" : ringFor(p.state)}`}>
-                {p.avatarUrl ? (
-                  <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" />
-                ) : (
-                  p.name.charAt(0).toUpperCase()
-                )}
-                <span className={`absolute -bottom-0.5 -end-0.5 grid h-5 w-5 place-items-center rounded-full ring-2 ring-slate-900 ${p.wants ? "bg-amber-400" : dotFor(p.state)}`}>
-                  {p.wants ? <Hand className="h-2.5 w-2.5 text-amber-900" /> : p.state === "talking" ? <Mic className="h-2.5 w-2.5 text-emerald-900" /> : <MicOff className="h-2.5 w-2.5 text-red-900" />}
-                </span>
-                {p.onStage && <span className="absolute inset-x-0 bottom-0 bg-brand-600/80 py-[1px] text-center text-[8px] font-bold">{t("meet.onStage")}</span>}
-              </span>
-              <span className="w-full truncate text-center text-[10.5px] font-bold text-slate-200">{p.name}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="shrink-0 border-t border-white/10 bg-slate-900 px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3">
+      <div className="shrink-0 border-t border-white/10 bg-[#1b1440] px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3">
         {myWant && <p className="mb-2 text-center text-[11.5px] font-bold text-amber-300">{t("meet.waitingHost")}</p>}
         <div className="flex items-center justify-center gap-3">
           <CtrlBtn active={myState === "talking"} pending={myWant === "audio"} onClick={toggleMic} activeCls="bg-emerald-500" label={t("meet.mute")}>
@@ -532,20 +525,6 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
           </CtrlBtn>
           <CtrlBtn active={myScreen} pending={myWant === "screen"} onClick={toggleScreen} activeCls="bg-violet-500" label={t("meet.screen")}>
             <MonitorUp className="h-6 w-6" />
-          </CtrlBtn>
-          <CtrlBtn
-            active={myCan.text || amAdmin}
-            pending={myWant === "text"}
-            badge={unread}
-            onClick={() => {
-              if (!amAdmin && !myCan.text) { request("text"); return; }
-              setChatOpen(true);
-              setUnread(0);
-            }}
-            activeCls="bg-amber-400 text-amber-950"
-            label={t("meet.chat")}
-          >
-            <MessageSquare className="h-6 w-6" />
           </CtrlBtn>
           <button onClick={leaveRoom} aria-label={t("meet.leave")} className="grid h-14 w-14 place-items-center rounded-full bg-red-500 text-white active:scale-95">
             <PhoneOff className="h-6 w-6" />
@@ -582,90 +561,6 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         )}
       </AnimatePresence>
 
-      {/* member: prove you know the code before sharing */}
-      {shareAsk && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={() => setShareAsk(false)}>
-          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-[480px] rounded-t-3xl bg-white px-5 pb-[calc(env(safe-area-inset-bottom)+18px)] pt-4 text-ink">
-            <p className="mb-1 flex items-center gap-1.5 text-[15px] font-extrabold">
-              <KeyRound className="h-4 w-4 text-brand-600" /> {t("meet.shareNeedsCode")}
-            </p>
-            <p className="mb-3 text-[12px] font-medium text-muted">{t("meet.shareNeedsCodeHint")}</p>
-            <input
-              autoFocus
-              value={shareCode}
-              onChange={(e) => { setShareCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)); setShareErr(null); }}
-              onKeyDown={(e) => e.key === "Enter" && confirmShare()}
-              dir="ltr"
-              placeholder="XXXXXX"
-              className="mb-2 h-12 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-4 text-center text-[17px] font-extrabold tracking-[0.3em] text-ink outline-none focus:border-brand-500 focus:bg-white"
-            />
-            {shareErr && <p className="mb-2 text-center text-[12.5px] font-bold text-red-600">{shareErr}</p>}
-            <button onClick={confirmShare} disabled={shareCode.trim().length < 4} className={`w-full rounded-2xl py-3.5 text-[15px] font-bold text-white ${shareCode.trim().length >= 4 ? "bg-brand-600" : "bg-slate-300"}`}>
-              {t("meet.invite")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* in-room chat */}
-      <AnimatePresence>
-        {chatOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setChatOpen(false)} className="fixed inset-0 z-50 flex items-end justify-center bg-black/50">
-            <motion.div
-              dir={dir}
-              initial={{ y: 400 }} animate={{ y: 0 }} exit={{ y: 400 }} transition={{ type: "spring", damping: 30, stiffness: 320 }}
-              onClick={(e) => e.stopPropagation()}
-              className="flex h-[64dvh] w-full max-w-[480px] flex-col rounded-t-3xl bg-slate-800"
-            >
-              <div className="relative shrink-0 border-b border-white/10 py-3.5 text-center">
-                <span className="absolute start-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-white/20" />
-                <p className="text-[14.5px] font-extrabold text-white">{t("meet.chat")}</p>
-                <button onClick={() => setChatOpen(false)} aria-label={t("close")} className="absolute end-3 top-3 grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white active:scale-95">
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="no-scrollbar flex-1 overflow-y-auto px-4 py-3">
-                {chat.length === 0 ? (
-                  <p className="mt-10 text-center text-[13px] font-medium text-slate-400">{t("meet.chatEmpty")}</p>
-                ) : (
-                  chat.map((m, i) => (
-                    <div key={`${m.userId}-${m.at}-${i}`} className="flex items-start gap-2.5 py-2">
-                      <button onClick={() => router.push(`/business/${m.userId}`)} className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-600 text-[11px] font-extrabold text-white">
-                        {m.avatarUrl ? (
-                          <img src={m.avatarUrl} alt="" className="h-full w-full object-cover" />
-                        ) : (
-                          (m.name || "•").charAt(0).toUpperCase()
-                        )}
-                      </button>
-                      <p className="min-w-0 flex-1 text-[13px] leading-snug text-slate-100">
-                        <button onClick={() => router.push(`/business/${m.userId}`)} className="font-extrabold text-white">{m.name}</button>{" "}
-                        <span className="font-medium text-slate-300">{m.body}</span>
-                      </p>
-                    </div>
-                  ))
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="shrink-0 border-t border-white/10 p-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
-                <div className="flex items-center gap-2">
-                  <input
-                    value={chatText}
-                    onChange={(e) => setChatText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") sendChat(); }}
-                    placeholder={t("meet.chatHint")}
-                    className="h-11 flex-1 rounded-2xl bg-white/10 px-4 text-[14px] font-medium text-white outline-none placeholder:text-slate-500"
-                  />
-                  <button onClick={sendChat} disabled={!chatText.trim()} aria-label={t("chat.send")} className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-brand-600 text-white disabled:opacity-40 active:scale-95">
-                    <Send className={`h-5 w-5 ${dir === "rtl" ? "-scale-x-100" : ""}`} />
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {sel && (
@@ -709,6 +604,47 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* roster — who's in the room; the host taps someone to grant mic / camera / screen / text */}
+      {rosterOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={() => setRosterOpen(false)}>
+          <div dir={dir} onClick={(e) => e.stopPropagation()} className="flex max-h-[70dvh] w-full max-w-[480px] flex-col rounded-t-3xl bg-[#241b57]">
+            <div className="relative shrink-0 border-b border-white/10 py-3.5 text-center">
+              <span className="absolute start-1/2 top-1.5 h-1 w-10 -translate-x-1/2 rounded-full bg-white/20" />
+              <p className="text-[14.5px] font-extrabold text-white">{t("meet.people")} · {ld(people.length, locale)}/{ld(maxSeats, locale)}</p>
+              <button onClick={() => setRosterOpen(false)} aria-label={t("close")} className="absolute end-3 top-3 grid h-8 w-8 place-items-center rounded-full bg-white/10 text-white active:scale-95"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="no-scrollbar flex-1 overflow-y-auto p-3">
+              {people.map((p) => (
+                <button key={p.id} onClick={() => { if (amAdmin && !p.host) { setSel(p); setRosterOpen(false); } else router.push(`/business/${p.id}`); }}
+                  className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-start hover:bg-white/5">
+                  <span className={`relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-[#2c2058] text-[14px] font-extrabold text-white ring-2 ${p.blocked ? "opacity-40 ring-slate-600" : ringFor(p.state)}`}>
+                    {p.avatarUrl ? (
+                      <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      p.name.charAt(0).toUpperCase()
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1 truncate text-[13.5px] font-bold text-white">
+                      {p.host && <Crown className="h-3.5 w-3.5 text-amber-400" />} {p.name}
+                    </span>
+                    <span className="text-[11px] font-medium text-slate-400">{t(p.state === "talking" ? "meet.talking" : p.wants ? "meet.wantsTalk" : "meet.muted")}</span>
+                  </span>
+                  {p.wants && <Hand className="h-4 w-4 shrink-0 text-amber-300" />}
+                  {amAdmin && !p.host && <span className="shrink-0 text-[11px] font-bold text-brand-300">{t("meet.manage")}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {note && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-28 z-[60] flex justify-center px-6">
+          <div className="rounded-full bg-black/80 px-4 py-2.5 text-[12.5px] font-bold text-white shadow-lg">{note}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -735,9 +671,9 @@ function CtrlBtn({ active, pending, badge, onClick, children, activeCls, label }
   return (
     <button onClick={onClick} aria-label={label} className={`relative grid h-14 w-14 place-items-center rounded-full transition-colors active:scale-95 ${active ? activeCls : "bg-white/10 text-white"}`}>
       {children}
-      {pending && <span className="absolute -top-0.5 -end-0.5 h-3 w-3 animate-pulse rounded-full bg-amber-400 ring-2 ring-slate-900" />}
+      {pending && <span className="absolute -top-0.5 -end-0.5 h-3 w-3 animate-pulse rounded-full bg-amber-400 ring-2 ring-[#1b1440]" />}
       {!!badge && badge > 0 && (
-        <span className="absolute -top-1 -end-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold text-white ring-2 ring-slate-900">
+        <span className="absolute -top-1 -end-1 grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold text-white ring-2 ring-[#1b1440]">
           {badge}
         </span>
       )}

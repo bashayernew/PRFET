@@ -1,15 +1,20 @@
 {
-  "name": "Herot · هيروت",
-  "short_name": "Herot",
-  "description": "Discover and connect with what's around you.",
+  "name": "PRFET · برفت",
+  "short_name": "PRFET",
+  "description": "اكتشف وتواصل مع ما حولك — Discover and connect with what's around you.",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#042f2a",
-  "theme_color": "#042f2a",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#0b0718",
+  "theme_color": "#0b0718",
   "dir": "rtl",
   "lang": "ar",
+  "categories": ["social", "business"],
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

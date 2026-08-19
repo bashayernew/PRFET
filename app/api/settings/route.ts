@@ -30,21 +30,46 @@ const DEFAULTS = {
   priceSub3m: 13.99,
   priceSub6m: 26.99,
   priceSub12m: 53.99,
-  priceAdBase: 49.99,
-  priceAdExtraCountry: 15,
-  priceAdExtraDay: 11,
+  priceVip: 9.99,
+  priceAdBase: 14.99,
+  priceAdExtraCountry: 1,
+  priceAdExtraDay: 2,
   priceJobApply: 0,
   priceJobPost: 1.99,
   priceSeekerAd: 0.99,
   subEnabled: true,
   adsEnabled: true,
   jobsEnabled: true,
+  aiImagesBasic: 35,
+  aiImagesVip: 100,
+  aiVideosBasic: 9,
+  aiVideosVip: 20,
+  aiMessagesBasic: 4000,
+  aiMessagesVip: 7500,
+  storageGbBasic: 25,
+  storageGbVip: 50,
+  callMinutesBasic: 2000,
+  callMinutesVip: 480,
+  vaultEnabled: true,
+  priceAddonVoice: 1.99,
+  priceAddonMedia: 1.99,
+  priceAddonStorage: 1.99,
+  aiEnabled: true,
+  aiPremiumOnly: true, // the assistant is a paid perk
 };
 
 // GET /api/settings — the app's public contact details (everyone can read).
 export async function GET() {
   const s = await prisma.appSettings.findUnique({ where: { id: "app" } });
-  return NextResponse.json({ settings: s ?? DEFAULTS });
+  // Never expose the dashboard secrets on this public endpoint.
+  const safe = s
+    ? (() => {
+        const row = s as Record<string, unknown>;
+        for (const k of ["adminPassHash", "dashEmail", "dashPendingEmail", "dashOtpHash", "dashOtpExp"]) delete row[k];
+        return row;
+      })()
+    : DEFAULTS;
+  return NextResponse.json({ settings: safe });
 }
 
 const patchSchema = z.object({
@@ -72,6 +97,7 @@ const patchSchema = z.object({
   priceSub3m: z.number().min(0).max(100000).optional(),
   priceSub6m: z.number().min(0).max(100000).optional(),
   priceSub12m: z.number().min(0).max(100000).optional(),
+  priceVip: z.number().min(0).max(100000).optional(),
   priceAdBase: z.number().min(0).max(100000).optional(),
   priceAdExtraCountry: z.number().min(0).max(100000).optional(),
   priceAdExtraDay: z.number().min(0).max(100000).optional(),
@@ -82,6 +108,23 @@ const patchSchema = z.object({
   subEnabled: z.boolean().optional(),
   adsEnabled: z.boolean().optional(),
   jobsEnabled: z.boolean().optional(),
+  // monthly AI caps per tier (0 = unlimited)
+  aiImagesBasic: z.number().int().min(0).max(100000).optional(),
+  aiImagesVip: z.number().int().min(0).max(100000).optional(),
+  aiVideosBasic: z.number().int().min(0).max(100000).optional(),
+  aiVideosVip: z.number().int().min(0).max(100000).optional(),
+  aiMessagesBasic: z.number().int().min(0).max(10000000).optional(),
+  aiMessagesVip: z.number().int().min(0).max(10000000).optional(),
+  storageGbBasic: z.number().int().min(0).max(100000).optional(),
+  storageGbVip: z.number().int().min(0).max(100000).optional(),
+  callMinutesBasic: z.number().int().min(0).max(10000000).optional(),
+  callMinutesVip: z.number().int().min(0).max(10000000).optional(),
+  vaultEnabled: z.boolean().optional(),
+  priceAddonVoice: z.number().min(0).max(100000).optional(),
+  priceAddonMedia: z.number().min(0).max(100000).optional(),
+  priceAddonStorage: z.number().min(0).max(100000).optional(),
+  aiEnabled: z.boolean().optional(),
+  aiPremiumOnly: z.boolean().optional(), // false = open the assistant to free members too
 });
 
 /** Keep only real ISO codes, uppercase, deduped — garbage in the CSV never reaches the DB. */

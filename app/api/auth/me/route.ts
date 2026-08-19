@@ -17,6 +17,13 @@ export async function GET(req: Request) {
   // A cancelled subscription that ran out drops the account back to free.
   const user = await expireIfLapsed(found);
 
+  // Heartbeat for the AI absence check-ins: they're here now, so clear any pending pings.
+  if (found.checkin8Sent || found.checkin24Sent || !found.lastSeenAt) {
+    prisma.user.update({ where: { id: found.id }, data: { lastSeenAt: new Date(), checkin8Sent: false, checkin24Sent: false } }).catch(() => {});
+  } else {
+    prisma.user.update({ where: { id: found.id }, data: { lastSeenAt: new Date() } }).catch(() => {});
+  }
+
   // Country switched off while they were signed in — lock the session out too.
   if (!user.isAdmin && (await isCountryClosed(user.country))) {
     return NextResponse.json({ error: "country_closed" }, { status: 403 });
@@ -46,6 +53,7 @@ const patchSchema = z.object({
   showAddress: z.boolean().optional(),
   dmClosed: z.boolean().optional(), // "لا أستقبل رسائل" — allow-list only
   hideTop: z.boolean().optional(), // parental lock on the "most viewed" doorway
+  bleDiscoverable: z.boolean().optional(), // broadcast over Bluetooth so nearby people can find me
   locale: z.enum(["ar", "en"]).optional(),
   // premium-gated
   textColor: z.string().max(20).nullable().optional(), // red is rejected below — it is the app's alert colour
@@ -57,7 +65,10 @@ const patchSchema = z.object({
   social3: z.string().max(200).nullable().optional(),
 });
 
-const PREMIUM_FIELDS = ["textColor", "locationLat", "locationLng", "social1", "social2", "social3"] as const;
+// Coordinates are NOT premium: everyone may store them so the distance number can be
+// computed. The precise pin stays premium — /api/users/[id] only reveals coordinates
+// when the account is premium AND sharing (effPremium && shareLocation).
+const PREMIUM_FIELDS = ["textColor", "social1", "social2", "social3"] as const;
 
 export async function PATCH(req: Request) {
   const token = bearerFromRequest(req);

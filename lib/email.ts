@@ -95,9 +95,13 @@ export async function sendSupportEmail(t: {
     (t.fromName ? `From: ${t.fromName}\n` : "") +
     (t.contact ? `Contact: ${t.contact}\n` : "") +
     `\n${t.body}\n`;
+  // Reply-to: the sender's own contact when they left one, otherwise the support inbox
+  // itself. Never leave it as the From address — `noreply@` is not a real mailbox, so
+  // hitting Reply on one of these would bounce with 550 RecipientNotFound.
+  const replyTo = t.contact || to;
   // Prefer the HTTPS API; fall back to SMTP if no Resend key is set.
-  if (await resendSend(to, subject, text, t.contact || undefined)) return;
-  await smtpSend(to, subject, text, t.contact || undefined);
+  if (await resendSend(to, subject, text, replyTo)) return;
+  await smtpSend(to, subject, text, replyTo);
 }
 
 /**

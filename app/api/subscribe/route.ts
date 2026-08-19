@@ -1,53 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken, publicUser } from "@/lib/auth";
-import { getPrices, subPrice } from "@/lib/pricing";
-import { createInvoice, sendSubscriptionWelcome } from "@/lib/invoice";
 
-const DAYS = 30;
-const ALLOWED_MONTHS = [1, 3, 6, 12];
-
-// POST /api/subscribe — fake payment gateway: activates Premium.
-// Body: { months?: 1 | 3 | 6 | 12 } — bundles priced from the dashboard.
+// POST /api/subscribe — DISABLED. There is no self-serve payment: real subscriptions come
+// only from a verified app-store purchase (Google Play / App Store, handled inside the
+// native app) or from an admin grant. This route no longer activates Premium, so nobody
+// can get it for free from the web.
 export async function POST(req: Request) {
   const token = bearerFromRequest(req);
   const payload = token ? verifyAccessToken(token) : null;
   if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-
-  // master switch: when subscriptions are closed from the dashboard, only the
-  // 1-month plan remains — the longer bundles disappear.
-  const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { subEnabled: true } });
-  const subOpen = feat?.subEnabled !== false;
-
-  let months = 1;
-  try {
-    const raw = await req.json();
-    if (raw && ALLOWED_MONTHS.includes(raw.months)) months = raw.months;
-  } catch { /* empty body = 1 month */ }
-  if (!subOpen) months = 1; // closed subscriptions offer the one-month plan only
-
-  const prices = await getPrices();
-  const price = subPrice(prices, months);
-
-  // Buying more time never eats what's left — it stacks on top (same rule as gifts).
-  const current = await prisma.user.findUnique({ where: { id: payload.sub }, select: { premiumUntil: true } });
-  const base = current?.premiumUntil && current.premiumUntil > new Date() ? current.premiumUntil : new Date();
-  const expiresAt = new Date(base.getTime() + months * DAYS * 24 * 60 * 60 * 1000);
-
-  await prisma.subscription.create({
-    data: { userId: payload.sub, plan: "premium", amount: price, currency: "USD", expiresAt },
-  });
-  const user = await prisma.user.update({
-    where: { id: payload.sub },
-    // buying (re)arms auto-renewal with this bundle as the one to rebill
-    data: { isPremium: true, premiumUntil: expiresAt, autoRenew: true, renewMonths: months, subRenewNotified: false },
-  });
-
-  // invoice + the owner's welcome message
-  await createInvoice({ userId: payload.sub, kind: "subscription", description: `Premium — ${months} month(s)`, amount: price });
-  await sendSubscriptionWelcome(payload.sub);
-
-  return NextResponse.json({ ok: true, user: publicUser(user) });
+  return NextResponse.json({ error: "store_only" }, { status: 403 });
 }
 
 // DELETE /api/subscribe — cancel: auto-renewal stops, but the time already paid

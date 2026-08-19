@@ -62,9 +62,11 @@ export async function sendOwnerDM(userId: string, body: string): Promise<void> {
 export async function sendSubscriptionWelcome(subscriberId: string): Promise<void> {
   const me = await prisma.user.findUnique({ where: { id: subscriberId }, select: { locale: true } });
   const ar = (me?.locale || "ar") === "ar";
+  // This DM comes from an account with a closed inbox, so it must NOT invite a reply
+  // here — it points people at the Contact page, which is the real support channel.
   await sendOwnerDM(subscriberId, ar
-    ? "أهلاً بك في بريميوم 👑 شكراً لاشتراكك في PRFET! لأي استفسار أو مساعدة، راسل الإدارة من هنا مباشرة."
-    : "Welcome to Premium 👑 Thanks for subscribing to PRFET! For anything you need, message the administration right here.");
+    ? "أهلاً بك في بريميوم 👑 شكراً لاشتراكك في PRFET! للتواصل مع الإدارة، استخدم صفحة «تواصل مع الإدارة» من القائمة السفلية."
+    : "Welcome to Premium 👑 Thanks for subscribing to PRFET! To reach the administration, please use the \"Contact admin\" page in the bottom menu.");
 }
 
 /** Localized item names by kind: [Arabic, English]. */

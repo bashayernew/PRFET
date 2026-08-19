@@ -2,11 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Heart, MessageCircle, Repeat2, Send, Bookmark, Trash2, Volume2, VolumeX, BadgeCheck } from "lucide-react";
+import { Heart, MessageCircle, Repeat2, Send, Bookmark, Trash2, Volume2, VolumeX, BadgeCheck, Sparkles, Eye } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
-import { apiDelete, getAccessToken } from "@/lib/api";
+import { apiDelete, apiGet, getAccessToken } from "@/lib/api";
 import { repostPost, saveMedia, timeAgo, toggleLike, type FeedPost } from "@/lib/posts";
 import { vipStyle } from "@/lib/vip";
+
+// "Ask PRFET about this post" is a premium AI feature — hide it from non-subscribers.
+// The viewer's access is fetched once and shared across every card in the feed.
+let aiAccessCache: boolean | null = null;
 
 /**
  * One post in the scrollable feed — Instagram-style card:
@@ -18,12 +22,14 @@ export default function PostCard({
   onShare,
   onDeleted,
   onToast,
+  onOpenMedia,
 }: {
   post: FeedPost;
   onComments: (p: FeedPost) => void;
   onShare: (p: FeedPost) => void;
   onDeleted: (id: string) => void;
   onToast: (msg: string) => void;
+  onOpenMedia?: () => void;
 }) {
   const router = useRouter();
   const { t, locale } = useI18n();
@@ -31,8 +37,21 @@ export default function PostCard({
   const [likes, setLikes] = useState(post.likes);
   const [reposts, setReposts] = useState(post.reposts);
   const [muted, setMuted] = useState(true);
+  const [canAskAi, setCanAskAi] = useState(aiAccessCache ?? false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+
+  // Only subscribers (and admins) get the "Ask PRFET about this post" button.
+  useEffect(() => {
+    if (aiAccessCache !== null) { setCanAskAi(aiAccessCache); return; }
+    const token = getAccessToken();
+    if (!token) return;
+    apiGet<{ user: { isPremium?: boolean; isAdmin?: boolean } }>("/api/auth/me", token).then((res) => {
+      const ok = !!(res.ok && res.data?.user && (res.data.user.isPremium || res.data.user.isAdmin));
+      aiAccessCache = ok;
+      setCanAskAi(ok);
+    });
+  }, []);
 
   // Play a reel only while it is on screen.
   useEffect(() => {
@@ -86,7 +105,7 @@ export default function PostCard({
         <button onClick={openProfile} className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-200 text-[13px] font-extrabold text-slate-500 ring-2 ring-brand-500/70">
           {post.user.avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={post.user.avatarUrl} alt="" className="h-10 w-10 object-cover" />
+            <img src={post.user.avatarUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 object-cover" />
           ) : (
             post.user.displayName.slice(0, 1)
           )}
@@ -104,7 +123,7 @@ export default function PostCard({
           </span>
         </button>
         {post.mine ? (
-          <button onClick={remove} aria-label={t("post.delete")} className="grid h-8 w-8 place-items-center rounded-full text-slate-300 active:scale-90">
+          <button onClick={remove} aria-label={t("post.delete")} className="grid h-8 w-8 place-items-center rounded-full text-muted hover:text-red-500 active:scale-90">
             <Trash2 className="h-4 w-4" />
           </button>
         ) : (
@@ -122,7 +141,8 @@ export default function PostCard({
               loop
               muted={muted}
               playsInline
-              onClick={() => setMuted((m) => !m)}
+              preload="metadata"
+              onClick={() => (onOpenMedia ? onOpenMedia() : setMuted((m) => !m))}
               className="max-h-[70dvh] w-full object-contain"
             />
             <button
@@ -135,7 +155,7 @@ export default function PostCard({
           </>
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={post.mediaUrl} alt="" onDoubleClick={like} className="max-h-[70dvh] w-full object-contain" />
+          <img src={post.mediaUrl} alt="" onClick={onOpenMedia} onDoubleClick={like} loading="lazy" decoding="async" className="max-h-[70dvh] w-full object-contain" />
         )}
       </div>
 
@@ -153,6 +173,21 @@ export default function PostCard({
         <button onClick={save} aria-label={t("post.save")} className="ms-auto active:scale-90">
           <Bookmark className={`h-[22px] w-[22px] ${post.allowSave ? "text-ink" : "text-slate-300"}`} strokeWidth={2} />
         </button>
+      </div>
+
+      {/* Ask PRFET about this post (subscribers only) + how many people saw it */}
+      <div className="flex items-center gap-2 px-4 pt-2.5">
+        {canAskAi && (
+          <button
+            onClick={() => router.push(`/ask?post=${post.id}`)}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-brand-50 py-2 text-[12.5px] font-extrabold text-brand-300 ring-1 ring-brand-200 active:scale-[0.99]"
+          >
+            <Sparkles className="h-4 w-4" /> {t("post.askAi")}
+          </button>
+        )}
+        <span className={`flex shrink-0 items-center gap-1 rounded-2xl bg-slate-100 px-3 py-2 text-[12px] font-bold text-muted ${canAskAi ? "" : "ms-auto"}`}>
+          <Eye className="h-4 w-4" /> {ld(post.views, locale)}
+        </span>
       </div>
 
       {/* caption */}

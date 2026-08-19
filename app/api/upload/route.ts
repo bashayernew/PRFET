@@ -6,6 +6,7 @@ import { promisify } from "util";
 import path from "path";
 import crypto from "crypto";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
+import { storageCheck, storageBump } from "@/lib/ai-usage";
 
 const run = promisify(execFile);
 
@@ -67,6 +68,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "too_large", limitMb: Math.round(limit / (1024 * 1024)) }, { status: 413 });
   }
 
+  // Per-tier storage cap (dashboard-editable). Admins are unlimited.
+  const room = await storageCheck(payload.sub, file.size);
+  if (!room.allowed) {
+    return NextResponse.json({ error: "storage_full", capGb: Math.round(room.cap / (1024 * 1024 * 1024)) }, { status: 413 });
+  }
+
   const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
   const name = `${crypto.randomUUID()}.${ext}`;
   const dir = path.join(process.cwd(), "public", "uploads");
@@ -74,6 +81,8 @@ export async function POST(req: Request) {
   await writeFile(path.join(dir, name), Buffer.from(await file.arrayBuffer()));
 
   const finalName = file.type.startsWith("audio/") ? await toM4a(dir, name) : name;
+
+  await storageBump(payload.sub, file.size); // count it against the user's storage cap
 
   return NextResponse.json({ url: `/uploads/${finalName}`, name: file.name, type: file.type });
 }

@@ -41,6 +41,7 @@ export async function GET(req: Request) {
     if (n.kind === "admin_appointed") return "/profile";
     if (n.kind === "ad_removed") return "/ads";
     if (n.kind === "job_removed") return "/jobs";
+    if (n.kind === "ai_checkin") return "/ask";
     if (n.kind === "job_application") return n.targetId ? `/job/${n.targetId}` : "/jobs";
     return "";
   }

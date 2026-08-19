@@ -2,11 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { ArrowRight, ArrowLeft, Crown, Check, Palette, MapPin, Link2, CreditCard, Lock, CheckCircle2 } from "lucide-react";
+import { ArrowRight, ArrowLeft, Crown, Check, Palette, MapPin, Link2, Store, MessageSquareText, ImageIcon, HardDrive, MessageCircle, Phone, Sparkles, Lock } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { apiPost, getAccessToken } from "@/lib/api";
 import { useRequireAuth } from "@/lib/use-auth";
+import { apiPost, apiGet, getAccessToken } from "@/lib/api";
+import { useFastSpring, fastspringEnabled, FS_PATHS } from "@/components/fastspring-checkout";
+
+// Fill {placeholders} in a translated string with live numbers from the dashboard settings.
+const fill = (str: string, vars: Record<string, number | string>) =>
+  Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), str);
+const num = (x: unknown, d: number) => (typeof x === "number" ? x : d);
 
 export default function SubscribeScreen() {
   const router = useRouter();
@@ -14,68 +19,68 @@ export default function SubscribeScreen() {
   const ready = useRequireAuth();
   const Back = dir === "rtl" ? ArrowRight : ArrowLeft;
 
-  const [card, setCard] = useState("");
-  const [exp, setExp] = useState("");
-  const [cvc, setCvc] = useState("");
-  const [holder, setHolder] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
-  // bundle prices from the dashboard + which bundle is picked
-  const [months, setMonths] = useState<1 | 3 | 6 | 12>(1);
-  const [tiers, setTiers] = useState<Record<number, number>>({ 1: 4.99, 3: 13.99, 6: 26.99, 12: 53.99 });
-  // when the dashboard closes subscriptions, only the 1-month plan remains
-  const [subOpen, setSubOpen] = useState(true);
+  // Two monthly plans only — Golden (basic) and VIP — plus the add-on prices. No bundles.
+  const [tier, setTier] = useState<"basic" | "vip">("basic");
+  const [goldMonthly, setGoldMonthly] = useState(5.99);
+  const [vipMonthly, setVipMonthly] = useState(10.99);
+  const [addon, setAddon] = useState({ voice: 1.99, media: 1.99, storage: 1.99 });
+  // Per-tier limits shown on the plan cards — pulled live from the dashboard settings.
+  const [caps, setCaps] = useState({
+    gImages: 35, gVideos: 9, gMessages: 4000, gCalls: 2000, gStorage: 25,
+    vImages: 100, vVideos: 20, vMessages: 7500, vCalls: 480, vStorage: 50,
+  });
+  const [toast, setToast] = useState<string | null>(null);
+  const [buying, setBuying] = useState(false);
+  const [uid, setUid] = useState("");
+  const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
+    apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
+      if (r.ok && r.data?.user) setUid(r.data.user.id);
+    });
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
         const s = d?.settings ?? {};
-        setSubOpen(s.subEnabled !== false);
-        if (s.subEnabled === false) setMonths(1);
-        setTiers((prev) => ({
-          1: typeof s.priceSubscription === "number" ? s.priceSubscription : prev[1],
-          3: typeof s.priceSub3m === "number" ? s.priceSub3m : prev[3],
-          6: typeof s.priceSub6m === "number" ? s.priceSub6m : prev[6],
-          12: typeof s.priceSub12m === "number" ? s.priceSub12m : prev[12],
-        }));
+        if (typeof s.priceSubscription === "number") setGoldMonthly(s.priceSubscription);
+        if (typeof s.priceVip === "number") setVipMonthly(s.priceVip);
+        setAddon({
+          voice: typeof s.priceAddonVoice === "number" ? s.priceAddonVoice : 1.99,
+          media: typeof s.priceAddonMedia === "number" ? s.priceAddonMedia : 1.99,
+          storage: typeof s.priceAddonStorage === "number" ? s.priceAddonStorage : 1.99,
+        });
+        setCaps({
+          gImages: num(s.aiImagesBasic, 35), gVideos: num(s.aiVideosBasic, 9),
+          gMessages: num(s.aiMessagesBasic, 4000), gCalls: num(s.callMinutesBasic, 2000), gStorage: num(s.storageGbBasic, 25),
+          vImages: num(s.aiImagesVip, 100), vVideos: num(s.aiVideosVip, 20),
+          vMessages: num(s.aiMessagesVip, 7500), vCalls: num(s.callMinutesVip, 480), vStorage: num(s.storageGbVip, 50),
+        });
       })
       .catch(() => {});
   }, []);
 
-  const plans = subOpen ? ([1, 3, 6, 12] as const) : ([1] as const);
+  const price = tier === "vip" ? vipMonthly : goldMonthly;
 
-  const price = tiers[months];
+  // With FastSpring configured, tapping an add-on opens the card checkout; the webhook credits
+  // the pack after payment. Without it, we fall back to the temporary self-serve grant.
+  async function buyAddon(pack: "voice" | "media" | "storage") {
+    if (fastspringEnabled) { checkout(FS_PATHS[pack], uid); return; }
+    if (buying) return;
+    setBuying(true);
+    const res = await apiPost("/api/ai/addon", { pack }, getAccessToken() || undefined);
+    setBuying(false);
+    setToast(res.ok ? t("premium.addonDone") : t("common.error"));
+    setTimeout(() => setToast(null), 2200);
+  }
+
+  // Subscribe to the selected plan via FastSpring card checkout (or contact-admin fallback).
+  function buyPlan() {
+    if (fastspringEnabled) { checkout(tier === "vip" ? FS_PATHS.vip : FS_PATHS.golden, uid); return; }
+    router.push("/contact");
+  }
 
   if (!ready) return null;
 
-  const valid = card.replace(/\s/g, "").length >= 12 && exp.length >= 4 && cvc.length >= 3 && holder.trim().length >= 2;
-
-  async function pay() {
-    if (!valid || submitting) return;
-    setSubmitting(true);
-    const token = getAccessToken() || undefined;
-    const res = await apiPost("/api/subscribe", { months }, token);
-    if (res.ok) {
-      setDone(true);
-      setTimeout(() => router.push("/profile"), 1700);
-    } else {
-      setSubmitting(false);
-    }
-  }
-
   const shell = "mx-auto flex min-h-[100dvh] max-w-[480px] flex-col bg-slate-50";
-
-  if (done) {
-    return (
-      <div dir={dir} className={`${shell} items-center justify-center bg-white px-6 text-center`}>
-        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-20 w-20 place-items-center rounded-3xl bg-emerald-50">
-          <CheckCircle2 className="h-11 w-11 text-emerald-500" strokeWidth={2} />
-        </motion.div>
-        <h1 className="mt-6 text-2xl font-extrabold text-ink">{t("premium.success")}</h1>
-        <p className="mt-2 max-w-[300px] text-[14px] leading-relaxed text-muted">{t("premium.successHint")}</p>
-      </div>
-    );
-  }
 
   return (
     <div dir={dir} className={shell}>
@@ -90,74 +95,96 @@ export default function SubscribeScreen() {
       </div>
 
       <div className="no-scrollbar -mt-4 flex-1 overflow-y-auto px-5 pb-5">
-        {/* plan card */}
+        {/* tier toggle — Basic vs VIP */}
+        <div className="mb-4 flex gap-2 rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-slate-100">
+          <button onClick={() => setTier("basic")}
+            className={`flex-1 rounded-xl py-2.5 text-[13.5px] font-extrabold transition-all ${tier === "basic" ? "bg-brand-600 text-white" : "text-muted"}`}>
+            {t("premium.basic")}
+          </button>
+          <button onClick={() => setTier("vip")}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-[13.5px] font-extrabold transition-all ${tier === "vip" ? "bg-gradient-to-l from-amber-500 to-yellow-400 text-white" : "text-amber-600"}`}>
+            <Crown className="h-4 w-4" /> {t("premium.vip")}
+          </button>
+        </div>
+
+        {/* plan card — informational */}
         <div className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
           <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-50 text-amber-500">
+            <span className={`grid h-12 w-12 place-items-center rounded-2xl ${tier === "vip" ? "bg-amber-100 text-amber-600" : "bg-amber-50 text-amber-500"}`}>
               <Crown className="h-7 w-7" />
             </span>
             <div className="flex-1">
-              <p className="text-[16px] font-extrabold text-ink">{t("premium.title")}</p>
+              <p className="text-[16px] font-extrabold text-ink">{t(tier === "vip" ? "premium.vipName" : "premium.goldName")}</p>
               <p className="text-[12.5px] font-medium text-muted">{t("premium.tagline")}</p>
             </div>
             <div className="text-end">
               <p dir="ltr" className="text-[22px] font-extrabold text-brand-700">${price}</p>
-              <p className="text-[10.5px] font-bold text-muted">{t(`premium.m${months}`)}</p>
+              <p className="text-[10.5px] font-bold text-muted">{t("premium.perMonth")}</p>
             </div>
           </div>
 
-          {/* bundle picker — dashboard-priced; only 1-month when subscriptions are closed */}
-          <div className={`mt-4 grid gap-2 ${plans.length === 1 ? "grid-cols-1" : "grid-cols-4"}`}>
-            {plans.map((m) => (
-              <button
-                key={m}
-                onClick={() => setMonths(m)}
-                className={`flex flex-col items-center rounded-2xl border-2 px-1 py-2.5 ${
-                  months === m ? "border-brand-600 bg-brand-50" : "border-slate-200 bg-white hover:border-slate-300"
-                }`}
-              >
-                <span className={`text-[12px] font-extrabold ${months === m ? "text-brand-700" : "text-ink"}`}>{t(`premium.m${m}`)}</span>
-                <span dir="ltr" className={`mt-0.5 text-[12.5px] font-extrabold ${months === m ? "text-brand-700" : "text-muted"}`}>${tiers[m]}</span>
-              </button>
-            ))}
-          </div>
           <div className="mt-4 flex flex-col gap-2.5 border-t border-slate-100 pt-4">
-            <Perk icon={<Palette className="h-4 w-4" />} label={t("premium.perk1")} />
-            <Perk icon={<MapPin className="h-4 w-4" />} label={t("premium.perk2")} />
-            <Perk icon={<Link2 className="h-4 w-4" />} label={t("premium.perk3")} />
+            <Perk icon={<ImageIcon className="h-4 w-4" />} label={fill(t(tier === "vip" ? "premium.vImages" : "premium.gImages"), { img: tier === "vip" ? caps.vImages : caps.gImages, vid: tier === "vip" ? caps.vVideos : caps.gVideos })} />
+            <Perk icon={<HardDrive className="h-4 w-4" />} label={fill(t(tier === "vip" ? "premium.vStorage" : "premium.gStorage"), { gb: tier === "vip" ? caps.vStorage : caps.gStorage })} />
+            <Perk icon={<MessageCircle className="h-4 w-4" />} label={fill(t(tier === "vip" ? "premium.vMessages" : "premium.gMessages"), { n: tier === "vip" ? caps.vMessages : caps.gMessages })} />
+            <Perk icon={<Phone className="h-4 w-4" />} label={fill(t(tier === "vip" ? "premium.vCalls" : "premium.gCalls"), { min: tier === "vip" ? caps.vCalls : caps.gCalls })} />
+            <Perk icon={<Sparkles className="h-4 w-4" />} label={t("premium.gCharacter")} />
+            <Perk icon={<Sparkles className="h-4 w-4" />} label={t("premium.gReview")} />
+            <Perk icon={<Sparkles className="h-4 w-4" />} label={t("premium.gFeelings")} />
+            <Perk icon={<Sparkles className="h-4 w-4" />} label={t("premium.gAdHelp")} />
+            <Perk icon={<Lock className="h-4 w-4" />} label={t("premium.gVault")} />
+            <Perk icon={<Palette className="h-4 w-4" />} label={t("premium.gColor")} />
+            <Perk icon={<MapPin className="h-4 w-4" />} label={t("premium.gLocation")} />
+            <Perk icon={<Link2 className="h-4 w-4" />} label={t("premium.gSocials")} />
           </div>
         </div>
 
-        {/* card form */}
+        {/* buyable add-on packs — top up on your plan */}
         <div className="mt-4 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-          <div className="mb-3 flex items-center gap-2">
-            <CreditCard className="h-5 w-5 text-brand-600" />
-            <p className="text-[14px] font-extrabold text-ink">{t("premium.card")}</p>
+          <p className="mb-3 text-[14px] font-extrabold text-ink">{t("premium.addonsTitle")}</p>
+          <div className="flex flex-col gap-2.5">
+            <Addon icon={<Phone className="h-4 w-4" />} title={t("premium.addonVoice")} sub={t("premium.addonVoiceSub")} price={addon.voice} per={t("premium.m1")} onBuy={() => buyAddon("voice")} disabled={buying} />
+            <Addon icon={<ImageIcon className="h-4 w-4" />} title={t("premium.addonMedia")} sub={t("premium.addonMediaSub")} price={addon.media} per={t("premium.m1")} onBuy={() => buyAddon("media")} disabled={buying} />
+            <Addon icon={<HardDrive className="h-4 w-4" />} title={t("premium.addonStorage")} sub={t("premium.addonStorageSub")} price={addon.storage} per={t("premium.m3")} onBuy={() => buyAddon("storage")} disabled={buying} />
           </div>
-          <Field label={t("premium.cardNum")} value={card} onChange={(v) => setCard(v.replace(/[^\d ]/g, "").slice(0, 19))} placeholder="4242 4242 4242 4242" />
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <Field label={t("premium.exp")} value={exp} onChange={(v) => setExp(v.replace(/[^\d/]/g, "").slice(0, 5))} placeholder="MM/YY" />
-            <Field label={t("premium.cvc")} value={cvc} onChange={(v) => setCvc(v.replace(/\D/g, "").slice(0, 4))} placeholder="123" />
-          </div>
-          <div className="mt-3">
-            <Field label={t("premium.cardName")} value={holder} onChange={setHolder} placeholder="—" />
-          </div>
-          <p className="mt-3 flex items-center justify-center gap-1.5 text-[11.5px] font-medium text-muted">
-            <Lock className="h-3.5 w-3.5" /> {t("premium.demo")}
-          </p>
+          <p className="mt-3 text-[11px] font-medium leading-snug text-muted">{t("premium.addonsHint")}</p>
         </div>
 
-        {/* pay */}
-        <button
-          onClick={pay}
-          disabled={!valid || submitting}
-          className={`mt-5 flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-[15px] font-bold transition-all ${
-            valid && !submitting ? "bg-gradient-to-l from-brand-700 to-brand-500 text-white shadow-[0_16px_30px_-10px_rgba(40,46,158,0.6)]" : "cursor-not-allowed bg-slate-200 text-slate-400"
-          }`}
-        >
-          {submitting ? t("common.loading") : t("premium.pay")}
-        </button>
+        {/* how to subscribe — store billing (in the app) or an admin grant */}
+        <div className="mt-4 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+          <div className="mb-2 flex items-center gap-2">
+            <Store className="h-5 w-5 text-brand-600" />
+            <p className="text-[14px] font-extrabold text-ink">{t("premium.payVia")}</p>
+          </div>
+          <p className="text-[12.5px] font-medium leading-relaxed text-muted">{t("premium.payViaHint")}</p>
+          {fastspringEnabled ? (
+            <>
+              <button
+                onClick={buyPlan}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 py-3.5 text-[14px] font-extrabold text-white active:scale-95"
+              >
+                <Crown className="h-4 w-4" /> {t("premium.subscribeCard").replace("{price}", `$${price}`)}
+              </button>
+              <button onClick={() => router.push("/contact")} className="mt-2 w-full text-center text-[12px] font-bold text-muted">
+                {t("premium.contactAdmin")}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => router.push("/contact")}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 py-3.5 text-[14px] font-bold text-white active:scale-95"
+            >
+              <MessageSquareText className="h-4 w-4" /> {t("premium.contactAdmin")}
+            </button>
+          )}
+        </div>
       </div>
+
+      {toast && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-6">
+          <div className="rounded-full bg-ink px-4 py-2.5 text-[13px] font-bold text-white shadow-lg">{toast}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -172,17 +199,19 @@ function Perk({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+function Addon({ icon, title, sub, price, per, onBuy, disabled }: { icon: React.ReactNode; title: string; sub: string; price: number; per: string; onBuy: () => void; disabled?: boolean }) {
   return (
-    <div>
-      <label className="mb-1.5 block text-[12px] font-bold text-ink">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        dir="ltr"
-        className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-slate-50 px-3.5 text-[15px] font-medium text-ink outline-none transition-colors placeholder:font-normal placeholder:text-muted focus:border-brand-500 focus:bg-white"
-      />
-    </div>
+    <button onClick={onBuy} disabled={disabled}
+      className="flex w-full items-center gap-3 rounded-2xl border-2 border-slate-100 p-3 text-start transition-colors hover:border-brand-300 active:scale-[0.99] disabled:opacity-50">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-extrabold text-ink">{title}</p>
+        <p className="text-[11.5px] font-medium text-muted">{sub}</p>
+      </div>
+      <div className="text-end">
+        <p dir="ltr" className="text-[15px] font-extrabold text-brand-700">${price}</p>
+        <p className="text-[10px] font-bold text-muted">{per}</p>
+      </div>
+    </button>
   );
 }

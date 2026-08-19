@@ -56,15 +56,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       id: m.id, title: m.title, hostId: m.hostId, maxSeats: m.maxSeats, status: m.status,
       hostName: m.host?.displayName ?? "", hostAvatar: m.host?.avatarUrl ?? null,
       allowAudio: m.allowAudio, allowText: m.allowText, allowVideo: m.allowVideo,
-      allowRecording: m.allowRecording, followersOnly: m.followersOnly,
+      allowRecording: m.allowRecording, followersOnly: m.followersOnly, privacy: m.privacy,
       access, myJoinStatus, pendingJoins,
-      participants: m.participants
-        .filter((p) => !p.kicked)
-        .map((p) => ({
-          id: p.userId, name: p.user?.displayName ?? "", avatarUrl: p.user?.avatarUrl ?? null,
-          role: p.role, audioState: p.audioState, canAudio: p.canAudio, canText: p.canText, canVideo: p.canVideo,
-          canScreen: p.canScreen, onStage: p.onStage, wants: p.wants, blocked: p.blocked,
-        })),
+      // The roster is only for people actually in the room — outsiders (incl. those still at
+      // the gate of a private/hidden room) get the count but not who's inside.
+      participants: (access === "host" || access === "member")
+        ? m.participants
+            .filter((p) => !p.kicked)
+            .map((p) => ({
+              id: p.userId, name: p.user?.displayName ?? "", avatarUrl: p.user?.avatarUrl ?? null,
+              role: p.role, audioState: p.audioState, canAudio: p.canAudio, canText: p.canText, canVideo: p.canVideo,
+              canScreen: p.canScreen, onStage: p.onStage, wants: p.wants, blocked: p.blocked,
+            }))
+        : [],
     },
   });
 }

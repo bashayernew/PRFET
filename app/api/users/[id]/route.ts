@@ -29,14 +29,29 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!isFollower) return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  // Count a profile view (not self-views) and remember who viewed.
+  /**
+   * Count a profile view (never a self-view).
+   *
+   * At most ONE view per person per 24 hours. It used to increment on every single
+   * request, so a refresh — or simply navigating back — inflated the number: the counter
+   * read 14 while "Who viewed you" listed 2 people, which looked broken.
+   */
   if (viewer && viewer !== id) {
-    prisma.user.update({ where: { id }, data: { profileViews: { increment: 1 } } }).catch(() => {});
-    prisma.profileView.upsert({
-      where: { viewerId_targetId: { viewerId: viewer, targetId: id } },
-      update: { updatedAt: new Date() },
-      create: { viewerId: viewer, targetId: id },
-    }).catch(() => {});
+    (async () => {
+      const seen = await prisma.profileView.findUnique({
+        where: { viewerId_targetId: { viewerId: viewer, targetId: id } },
+        select: { updatedAt: true },
+      });
+      const fresh = !seen || Date.now() - seen.updatedAt.getTime() > 24 * 60 * 60 * 1000;
+      if (fresh) {
+        await prisma.user.update({ where: { id }, data: { profileViews: { increment: 1 } } });
+      }
+      await prisma.profileView.upsert({
+        where: { viewerId_targetId: { viewerId: viewer, targetId: id } },
+        update: { updatedAt: new Date() },
+        create: { viewerId: viewer, targetId: id },
+      });
+    })().catch(() => {});
   }
 
   // can this viewer message them? (closed inbox = allow-list only)
@@ -51,10 +66,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     prisma.follow.count({ where: { userId: id } }),
     // a story only counts while it is still alive (24h)
     prisma.story.count({ where: { userId: id, expiresAt: { gt: new Date() } } }),
-    // their profile live, while it's still running — any visitor may join it
+    // Only PUBLIC live rooms show on the profile — friends/private rooms stay off it.
+    // Accept rooms whose end time hasn't passed OR isn't set (null), so a live room never
+    // silently drops off the profile.
     prisma.meeting.findFirst({
-      where: { hostId: id, isProfileLive: true, status: "live", endsAt: { gt: new Date() } },
-      select: { id: true },
+      where: { hostId: id, status: "live", privacy: "public", OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }] },
+      orderBy: { isProfileLive: "desc" },
+      select: { id: true, title: true },
     }),
   ]);
 
@@ -91,6 +109,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       profileViews: u.profileViews, followers, following,
       hasStory: liveStories > 0,
       liveId: profileLive?.id ?? null,
+      liveTitle: profileLive?.title ?? null,
       dmClosed: u.dmClosed, canMessage,
       dist: distanceKm, showDistance: u.showDistance,
       // sponsor & branches (all admin-managed)

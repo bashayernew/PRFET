@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PRFET</title>
+    <style>
+      html, body {
+        margin: 0; height: 100%;
+        background: #1b1440; color: #f3efff;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; align-items: center; justify-content: center;
+      }
+      .box { text-align: center; opacity: 0.9; }
+      .spinner {
+        width: 34px; height: 34px; margin: 0 auto 14px;
+        border: 3px solid rgba(243,239,255,0.25); border-top-color: #f3efff;
+        border-radius: 50%; animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <!--
+      This local page only shows if the device is offline before prfet.com loads.
+      When online, Capacitor loads https://prfet.com (see capacitor.config.ts).
+    -->
+    <div class="box">
+      <div class="spinner"></div>
+      <div>PRFET</div>
+    </div>
+  </body>
+</html>

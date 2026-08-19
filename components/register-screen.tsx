@@ -72,6 +72,7 @@ export default function RegisterScreen() {
   const [agree, setAgree] = useState(false);
   const [nationality, setNationality] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "">("");
+  const [dob, setDob] = useState(""); // date of birth (personal accounts) — the app is 18+
   const [address, setAddress] = useState("");
 
 
@@ -95,6 +96,7 @@ export default function RegisterScreen() {
       if (typeof d.email === "string") setEmail(d.email);
       if (typeof d.nationality === "string") setNationality(d.nationality);
       if (d.gender === "male" || d.gender === "female") setGender(d.gender);
+      if (typeof d.dob === "string") setDob(d.dob);
       if (typeof d.address === "string") setAddress(d.address);
     } catch { /* ignore */ }
   }, []);
@@ -104,20 +106,35 @@ export default function RegisterScreen() {
     try {
       sessionStorage.setItem(
         "herot.regDraft",
-        JSON.stringify({ name, email, nationality, gender, address })
+        JSON.stringify({ name, email, nationality, gender, dob, address })
       );
     } catch { /* ignore */ }
-  }, [name, email, nationality, gender, address]);
+  }, [name, email, nationality, gender, dob, address]);
 
   const isBusiness = account === "business";
   const contactValid = emailOk(email);
   const contactError = touchedContact && email.length > 0 && !emailOk(email);
   const passwordOk = password.length === 0 || password.length >= 8;
 
+  // The app is 18+: personal accounts must give a birth date and be at least 18.
+  const ageYears = (() => {
+    if (!dob) return null;
+    const d = new Date(dob);
+    if (isNaN(d.getTime())) return null;
+    const now = new Date();
+    let a = now.getFullYear() - d.getFullYear();
+    const m = now.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < d.getDate())) a--;
+    return a;
+  })();
+  const ageOk = isBusiness ? true : ageYears !== null && ageYears >= 18;
+  const ageError = !isBusiness && dob.length > 0 && ageYears !== null && ageYears < 18;
+
   const valid =
     name.trim().length >= 4 && // client: names must be at least 4 characters
     contactValid &&
     passwordOk &&
+    ageOk &&
     agree &&
     (isBusiness ? address.trim().length >= 2 : true);
 
@@ -147,6 +164,7 @@ export default function RegisterScreen() {
       avatarUrl: avatar || undefined,
       nationality: !isBusiness && nationality ? nationality : undefined,
       gender: !isBusiness && gender ? gender : undefined,
+      dateOfBirth: !isBusiness && dob ? dob : undefined,
       address: isBusiness ? address.trim() : undefined,
       locale,
     });
@@ -160,7 +178,9 @@ export default function RegisterScreen() {
     }
     const code = res.data?.error;
     setError(
-      code === "country_closed"
+      code === "under_18"
+        ? t("register.under18")
+        : code === "country_closed"
         ? t("auth.countryClosed")
         : res.status === 409 || code === "identifier_taken"
           ? t("register.identifierTaken")
@@ -240,6 +260,19 @@ export default function RegisterScreen() {
               value={gender}
               onChange={(v) => setGender(v as "male" | "female")}
             />
+          </motion.div>
+        )}
+        {!isBusiness && (
+          <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
+            <label className="mb-1.5 block text-[13px] font-bold text-ink">{t("register.dob")}</label>
+            <div className={`flex items-center gap-2.5 rounded-2xl border-2 bg-slate-50 px-3.5 transition-colors focus-within:bg-white ${ageError ? "border-red-400" : "border-slate-200 focus-within:border-brand-500"}`}>
+              <User className="h-5 w-5 text-muted" />
+              <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} dir="ltr"
+                className="h-12 flex-1 bg-transparent text-[15px] font-medium text-ink outline-none" />
+            </div>
+            <p className={`mt-1 text-[11.5px] font-medium ${ageError ? "text-red-500" : "text-muted"}`}>
+              {ageError ? t("register.under18") : t("register.dobHint")}
+            </p>
           </motion.div>
         )}
         {!isBusiness && (

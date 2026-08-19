@@ -9,6 +9,7 @@ import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, getAccessToken } from "@/lib/api";
 import type { FeedPost } from "@/lib/posts";
 import PostCard from "@/components/post-card";
+import MediaViewer from "@/components/media-viewer";
 import CommentsSheet from "@/components/comments-sheet";
 import ShareSheet from "@/components/share-sheet";
 
@@ -28,6 +29,7 @@ export default function FeedScreen() {
   const [comments, setComments] = useState<FeedPost | null>(null);
   const [share, setShare] = useState<FeedPost | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [viewerAt, setViewerAt] = useState<number | null>(null); // index into posts for the fullscreen viewer
 
   const flash = useCallback((msg: string) => {
     setToast(msg);
@@ -36,14 +38,35 @@ export default function FeedScreen() {
 
   useEffect(() => {
     if (!ready) return;
-    const token = getAccessToken() || undefined;
-    apiGet<{ posts: FeedPost[] }>("/api/posts", token).then((res) => {
-      if (res.ok && res.data?.posts) setPosts(res.data.posts);
-      setLoaded(true);
-    });
-    apiGet<{ ads: ServedAd[] }>("/api/ads/serve", token).then((res) => {
-      if (res.ok && res.data?.ads) setAds(res.data.ads);
-    });
+    let alive = true;
+    const loadFeed = () => {
+      const token = getAccessToken() || undefined;
+      // same rule as home: the feed is people I follow, nobody else
+      apiGet<{ posts: FeedPost[] }>("/api/posts?feed=following", token).then((res) => {
+        if (alive && res.ok && res.data?.posts) setPosts(res.data.posts);
+        if (alive) setLoaded(true);
+      });
+    };
+    const loadAds = () => {
+      const token = getAccessToken() || undefined;
+      apiGet<{ ads: ServedAd[] }>("/api/ads/serve", token).then((res) => {
+        if (alive && res.ok && res.data?.ads) setAds(res.data.ads);
+      });
+    };
+    loadFeed();
+    loadAds();
+    // Keep the feed fresh so new posts appear without a manual reload: refetch when the
+    // tab regains focus, and quietly poll while it's open.
+    const onFocus = () => { if (document.visibilityState === "visible") loadFeed(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") loadFeed(); }, 30_000);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+      clearInterval(timer);
+    };
   }, [ready]);
 
   // A paid ad slides in after every 4 posts. No house/demo ads.
@@ -81,6 +104,7 @@ export default function FeedScreen() {
               onShare={setShare}
               onDeleted={(id) => setPosts((ps) => ps.filter((p) => p.id !== id))}
               onToast={flash}
+              onOpenMedia={() => setViewerAt(posts.findIndex((p) => p.id === r.post.id))}
             />
           ) : (
             <AdCard key={r.key} ad={r.ad} t={t} onOpen={() => router.push(`/ad/${r.ad.id}`)} />
@@ -108,6 +132,20 @@ export default function FeedScreen() {
         />
       )}
       {share && <ShareSheet post={share} onClose={() => setShare(null)} onToast={flash} />}
+
+      {viewerAt !== null && viewerAt >= 0 && (
+        <MediaViewer
+          items={posts}
+          startIndex={viewerAt}
+          onClose={() => setViewerAt(null)}
+          onComments={setComments}
+          onShare={setShare}
+          onToast={flash}
+          onLikeChange={(id, liked, likes) =>
+            setPosts((ps) => ps.map((p) => (p.id === id ? { ...p, likedByMe: liked, likes } : p)))
+          }
+        />
+      )}
 
       {toast && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}

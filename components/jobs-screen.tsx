@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight, ArrowLeft, Briefcase, UserPlus, Search, MapPin, Wallet, GraduationCap,
-  Check, ChevronDown, UploadCloud, MessageCircle, FileText, Globe2,
+  Check, ChevronDown, UploadCloud, MessageCircle, FileText, Globe2, Sparkles,
 } from "lucide-react";
 import { useI18n, ld, type Locale } from "@/lib/i18n";
 import { COUNTRIES, getCountry } from "@/lib/countries";
@@ -18,6 +18,7 @@ type Mode = "hub" | "post-job" | "post-cv" | "search";
 
 type Job = {
   id: string; companyId: string; companyName: string; imageUrl: string | null; title: string;
+  description?: string | null;
   typeKey: string; degree: string | null; experience: string | null; salary: string | null;
   nationality: string | null; gender: string | null; country: string | null; location: string | null;
   birthFrom: number | null; birthTo: number | null;
@@ -250,9 +251,31 @@ function PostJob({ t, locale, jobsOn, onDone }: { t: (k: string) => string; loca
   const [gender, setGender] = useState("any");
   const [birthFrom, setBirthFrom] = useState("");
   const [birthTo, setBirthTo] = useState("");
+  const [description, setDescription] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const valid = title.trim().length >= 2 && companyName.trim().length >= 2 && country.length > 0;
+
+  // Free "Write with AI" — drafts a job description from the fields already filled in.
+  async function aiWrite() {
+    if (aiBusy) return;
+    const brief = [
+      title && `Role: ${title}`,
+      companyName && `Company: ${companyName}`,
+      degree && `Degree: ${degree}`,
+      experience && `Experience: ${experience}`,
+      salary && `Salary: ${salary}`,
+      city && `Location: ${city}`,
+      description.trim() && `Notes: ${description.trim()}`,
+    ].filter(Boolean).join("\n") || (typeof window !== "undefined" ? window.prompt(t("ai.jobPrompt")) || "" : "");
+    if (!brief.trim()) return;
+    setAiBusy(true);
+    const token = getAccessToken() || undefined;
+    const res = await apiPost<{ text?: string }>("/api/ai/generate", { kind: "job_ad", prompt: brief }, token);
+    setAiBusy(false);
+    if (res.ok && res.data?.text) setDescription(res.data.text);
+  }
 
   async function publish() {
     if (!valid || busy) return;
@@ -267,6 +290,7 @@ function PostJob({ t, locale, jobsOn, onDone }: { t: (k: string) => string; loca
       title: title.trim(),
       companyName: companyName.trim(),
       imageUrl,
+      description: description.trim() || undefined,
       degree: degree.trim() || undefined,
       experience: experience.trim() || undefined,
       salary: salary.trim() || undefined,
@@ -310,6 +334,17 @@ function PostJob({ t, locale, jobsOn, onDone }: { t: (k: string) => string; loca
       <CountryPick t={t} locale={locale} label={t("jobs.employeeLocation")} values={country} onChange={setCountry} />
       <Field t={t} label={t("jobs.city")} value={city} onChange={setCity} optional placeholder={t("jobs.cityPh")} />
       <GenderPick t={t} value={gender} onChange={setGender} withAny label={t("jobs.genderWanted")} />
+
+      {/* free-text description + AI writer */}
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-[12.5px] font-bold text-ink">{t("jobs.description")} <span className="font-medium text-muted">({t("jobs.optional")})</span></p>
+        <button type="button" onClick={aiWrite} disabled={aiBusy}
+          className="flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-[11.5px] font-extrabold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100 disabled:opacity-50 active:scale-95">
+          <Sparkles className="h-3.5 w-3.5" /> {aiBusy ? t("ai.writing") : t("ai.write")}
+        </button>
+      </div>
+      <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("jobs.descriptionPh")} rows={4}
+        className="mb-4 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500" />
 
       <p className="mb-1.5 text-[12.5px] font-bold text-ink">{t("jobs.birthRange")} <span className="font-medium text-muted">({t("jobs.optional")})</span></p>
       <div className="mb-4 flex items-center gap-2">
@@ -607,6 +642,7 @@ function SearchPane({ t, locale, onOpenProfile, onMessage, onOpenJob }: { t: (k:
                     {j.experience && <span className="flex items-center gap-1"><Briefcase className="h-3.5 w-3.5" /> {j.experience}</span>}
                     {j.nationality && <span className="flex items-center gap-1"><Globe2 className="h-3.5 w-3.5" /> {getCountry(j.nationality)?.[locale] ?? j.nationality}</span>}
                   </div>
+                  {j.description && <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[12.5px] leading-relaxed text-ink/80">{j.description}</p>}
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={(e) => { e.stopPropagation(); onOpenJob(j.id); }} className="flex items-center justify-center gap-1.5 rounded-2xl bg-brand-600 py-2.5 text-[13px] font-bold text-white active:scale-95">
                       <Briefcase className="h-4 w-4" /> {t("jobs.details")}

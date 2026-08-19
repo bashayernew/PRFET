@@ -90,12 +90,16 @@ export default function MeetingCreateScreen() {
           <span className="text-[13px] font-extrabold text-brand-600">{ld(ROOM_MINUTES, locale)} {t("meet.minUnit")}</span>
         </div>
 
-        {/* mic seats — up to 20 people can talk at once; anyone else can join to watch or chat */}
-        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
-          <span className="flex items-center gap-1.5 text-[13px] font-bold text-ink"><Mic className="h-4 w-4 text-brand-600" /> {t("meet.micSeats")}</span>
-          <span className="text-[13px] font-extrabold text-brand-600">{ld(MAX_SEATS, locale)}</span>
-        </div>
-        <p className="mb-5 mt-1.5 text-[11.5px] font-medium leading-snug text-muted">{t("meet.micSeatsNote")}</p>
+        {/* max attendees — only for friends/private rooms; public rooms are unlimited */}
+        {privacy !== "public" && (
+          <>
+            <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-100">
+              <span className="flex items-center gap-1.5 text-[13px] font-bold text-ink"><Mic className="h-4 w-4 text-brand-600" /> {t("meet.micSeats")}</span>
+              <span className="text-[13px] font-extrabold text-brand-600">{ld(MAX_SEATS, locale)}</span>
+            </div>
+            <p className="mb-5 mt-1.5 text-[11.5px] font-medium leading-snug text-muted">{t("meet.micSeatsNote")}</p>
+          </>
+        )}
 
         {/* privacy — visibility only; entry is approved by the host */}
         <p className="mb-2 text-[13px] font-bold text-ink">{t("meet.privacy")}</p>

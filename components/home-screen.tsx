@@ -13,7 +13,7 @@ import {
   Megaphone,
   Newspaper,
   Crown,
-  TrendingUp,
+  Sparkles,
   Briefcase,
   Video,
   Plus,
@@ -29,6 +29,7 @@ import { useLocationSync } from "@/lib/use-location-sync";
 import { apiGet, apiPatch, apiPost, apiUpload, getAccessToken } from "@/lib/api";
 import type { FeedPost } from "@/lib/posts";
 import PostCard from "@/components/post-card";
+import MediaViewer from "@/components/media-viewer";
 import CommentsSheet from "@/components/comments-sheet";
 import ShareSheet from "@/components/share-sheet";
 import { enablePush } from "@/lib/push-client";
@@ -48,6 +49,7 @@ export default function HomeScreen() {
   const [dirUsers, setDirUsers] = useState<{ id: string; displayName: string; category: string | null }[] | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [viewerAt, setViewerAt] = useState<number | null>(null); // index into posts for the fullscreen viewer
   const [comments, setComments] = useState<FeedPost | null>(null);
   const [share, setShare] = useState<FeedPost | null>(null);
   const storyInputRef = useRef<HTMLInputElement>(null);
@@ -107,9 +109,26 @@ export default function HomeScreen() {
         try { sessionStorage.setItem("herot.storyOrder", JSON.stringify(users.map((u) => u.id))); } catch { /* ignore */ }
       }
     });
-    apiGet<{ posts: FeedPost[] }>("/api/posts", token).then((res) => {
-      if (res.ok && res.data?.posts) setPosts(res.data.posts);
-    });
+    let alive = true;
+    const loadPosts = () => {
+      // following-only: discovery lives on the Discover page, not the home feed
+      apiGet<{ posts: FeedPost[] }>("/api/posts?feed=following", token).then((res) => {
+        if (alive && res.ok && res.data?.posts) setPosts(res.data.posts);
+      });
+    };
+    loadPosts();
+    // Keep the feed fresh: refetch when the tab regains focus, and quietly poll while open,
+    // so a newly published post appears without a manual reload.
+    const onFocus = () => { if (document.visibilityState === "visible") loadPosts(); };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    const timer = setInterval(() => { if (document.visibilityState === "visible") loadPosts(); }, 30_000);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+      clearInterval(timer);
+    };
   }, [ready]);
 
   // Publish an image/video post from the Reels row.
@@ -232,10 +251,8 @@ export default function HomeScreen() {
           <StripCard icon={<Newspaper className="h-5 w-5" />} tint="bg-brand-50 text-brand-600" label={t("home.boxAds")} onClick={() => router.push("/ads")} />
           <StripCard icon={<Crown className="h-5 w-5" />} tint="bg-amber-50 text-amber-600" label={t("home.boxSponsor")} onClick={() => router.push("/sponsor")} />
           <StripCard icon={<Briefcase className="h-5 w-5" />} tint="bg-rose-50 text-rose-600" label={t("home.boxJobs")} onClick={() => router.push("/jobs")} />
-          {/* the "most viewed" doorway respects the parental lock */}
-          {!me?.hideTop && (
-            <StripCard icon={<TrendingUp className="h-5 w-5" />} tint="bg-emerald-50 text-emerald-600" label={t("home.boxTop")} onClick={() => router.push("/top")} />
-          )}
+          {/* Ask PRFET — the AI assistant (replaces the old "most viewed" doorway) */}
+          <StripCard icon={<Sparkles className="h-5 w-5" />} tint="bg-emerald-50 text-emerald-600" label={t("home.boxAsk")} onClick={() => router.push("/ask")} />
           <StripCard icon={<Video className="h-5 w-5" />} tint="bg-violet-50 text-violet-600" label={t("home.boxMeetings")} onClick={() => router.push("/meetings")} />
           <StripCard icon={<Search className="h-5 w-5" />} tint="bg-sky-50 text-sky-600" label={t("home.boxSearch")} onClick={() => router.push("/discover")} />
         </div>
@@ -248,21 +265,9 @@ export default function HomeScreen() {
           </button>
         </div>
         <div className="no-scrollbar -mx-5 flex gap-3.5 overflow-x-auto px-5 pb-1">
-          <button onClick={() => storyInputRef.current?.click()} className="flex shrink-0 flex-col items-center gap-1.5">
-            <span className="relative grid h-16 w-16 place-items-center rounded-full bg-brand-50 ring-2 ring-brand-200">
-              {me?.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={me.avatarUrl} alt="" className="h-16 w-16 rounded-full object-cover" />
-              ) : (
-                <span className="text-[20px] font-extrabold text-brand-600">{initial}</span>
-              )}
-              <span className="absolute -bottom-0.5 -end-0.5 grid h-5 w-5 place-items-center rounded-full bg-brand-600 text-white ring-2 ring-slate-50">
-                <Plus className="h-3.5 w-3.5" strokeWidth={3} />
-              </span>
-            </span>
-            <span className="text-[11px] font-bold text-ink/80">{t("stories.you")}</span>
-          </button>
-          {/* only people who actually have an active story get a ring here */}
+          {/* The "Your story +" tile was removed: this row now shows ONLY real, active
+              stories — mine included, once I've posted one. Posting a story is done from
+              the Create button in the bottom bar. */}
           {storyUsers.map((u) => {
             const Icon = catIcon(u.category ?? "cat.other");
             return (
@@ -302,7 +307,7 @@ export default function HomeScreen() {
           </button>
         ) : (
           <div className="-mx-5 overflow-hidden">
-            {posts.map((p) => (
+            {posts.map((p, i) => (
               <PostCard
                 key={p.id}
                 post={p}
@@ -310,6 +315,7 @@ export default function HomeScreen() {
                 onShare={setShare}
                 onDeleted={(id) => setPosts((ps) => ps.filter((x) => x.id !== id))}
                 onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }}
+                onOpenMedia={() => setViewerAt(i)}
               />
             ))}
           </div>
@@ -324,6 +330,19 @@ export default function HomeScreen() {
           />
         )}
         {share && <ShareSheet post={share} onClose={() => setShare(null)} onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }} />}
+        {viewerAt !== null && (
+          <MediaViewer
+            items={posts}
+            startIndex={viewerAt}
+            onClose={() => setViewerAt(null)}
+            onComments={setComments}
+            onShare={setShare}
+            onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }}
+            onLikeChange={(id, liked, likes) =>
+              setPosts((ps) => ps.map((x) => (x.id === id ? { ...x, likedByMe: liked, likes } : x)))
+            }
+          />
+        )}
       </div>
 
       <CountrySheet

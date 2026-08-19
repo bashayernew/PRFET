@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, ArrowLeft, PartyPopper, Megaphone, Bell, CheckCheck, UserPlus, MessageCircle, Video, Heart, Repeat2, PhoneMissed, Briefcase, Crown, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowRight, ArrowLeft, PartyPopper, Megaphone, Bell, CheckCheck, UserPlus, MessageCircle, Video, Heart, Repeat2, PhoneMissed, Briefcase, Crown, ShieldAlert, ShieldCheck, Sparkles } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, getAccessToken } from "@/lib/api";
@@ -38,6 +38,7 @@ const META: Record<string, { icon: typeof Bell; titleKey: string; bodyKey: strin
   admin_appointed: { icon: ShieldCheck, titleKey: "notif.adminTitle", bodyKey: "notif.adminBody", tint: "bg-red-500" },
   ad_removed: { icon: Megaphone, titleKey: "notif.adRemovedTitle", bodyKey: "notif.adRemovedBody", tint: "bg-red-500" },
   job_removed: { icon: Megaphone, titleKey: "notif.jobRemovedTitle", bodyKey: "notif.jobRemovedBody", tint: "bg-red-500" },
+  ai_checkin: { icon: Sparkles, titleKey: "notif.checkinTitle", bodyKey: "notif.checkin8Body", tint: "bg-brand-600" },
   suspended: { icon: ShieldAlert, titleKey: "notif.suspTitle", bodyKey: "notif.suspBody", tint: "bg-red-500" },
   unsuspended: { icon: ShieldCheck, titleKey: "notif.unsuspTitle", bodyKey: "notif.unsuspBody", tint: "bg-emerald-500" },
 };
@@ -73,6 +74,7 @@ function sentence(n: Notif, t: (k: string) => string) {
     case "admin_appointed": return text || t("notif.adminBody");
     case "ad_removed": return t("notif.adRemovedBody");
     case "job_removed": return t("notif.jobRemovedBody");
+    case "ai_checkin": return n.data === "24" ? t("notif.checkin24Body") : t("notif.checkin8Body");
     case "suspended": return text || t("notif.suspBody");
     case "unsuspended": return t("notif.unsuspBody");
     default: return text;

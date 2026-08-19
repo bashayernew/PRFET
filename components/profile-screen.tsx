@@ -3,14 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { MapPin, Crown, Link2, Camera, Settings, Pencil, Plus } from "lucide-react";
+import { MapPin, Crown, Link2, Camera, Settings, Pencil, Plus, Trash2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { apiGet, apiPatch, apiPost, apiUpload, getAccessToken } from "@/lib/api";
+import { apiGet, apiPatch, apiPost, apiUpload, apiDelete, getAccessToken } from "@/lib/api";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { getCountry } from "@/lib/countries";
 import { Section } from "@/components/profile-ui";
 import SocialCircles from "@/components/social-circles";
+import MediaViewer from "@/components/media-viewer";
+import type { FeedPost } from "@/lib/posts";
 
 type Me = {
   id: string;
@@ -31,6 +33,7 @@ type Me = {
   allowSaveMedia: boolean;
   showAddress: boolean;
   isPremium: boolean;
+  premiumTier?: string;
   isAdmin?: boolean;
   textColor: string | null;
   shareLocation: boolean;
@@ -42,7 +45,12 @@ type Me = {
 };
 
 type Stats = { followers: number; following: number; profileViews: number };
-type MyPost = { id: string; kind: string; mediaUrl: string };
+/**
+ * The profile grid only renders the thumbnail, but /api/posts already returns the full
+ * post, and the fullscreen viewer needs likes/comments/permissions — so keep the whole
+ * shape rather than narrowing it here.
+ */
+type MyPost = FeedPost;
 
 
 export default function ProfileScreen() {
@@ -56,6 +64,7 @@ export default function ProfileScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const [bioDraft, setBioDraft] = useState<string | null>(null); // null = not editing
   const [myPosts, setMyPosts] = useState<MyPost[]>([]);
+  const [viewerAt, setViewerAt] = useState<number | null>(null); // index into myPosts for the fullscreen viewer
   const [hasStory, setHasStory] = useState(false);
   const avatarRef = useRef<HTMLInputElement>(null);
   const storyInputRef = useRef<HTMLInputElement>(null);
@@ -110,6 +119,18 @@ export default function ProfileScreen() {
       }
     }
     if (postInputRef.current) postInputRef.current.value = "";
+  }
+
+  /** Remove one of my posts straight from the grid. */
+  async function deletePost(id: string) {
+    if (!confirm(t("post.deleteConfirm"))) return;
+    const res = await apiDelete(`/api/posts/${id}`, getAccessToken() || undefined);
+    if (res.ok) {
+      setMyPosts((ps) => ps.filter((p) => p.id !== id));
+      flash(t("post.deleted"));
+    } else {
+      flash(t("common.error"));
+    }
   }
 
   function flash(msg: string) {
@@ -238,7 +259,7 @@ export default function ProfileScreen() {
               </p>
               {me?.isPremium && (
                 <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#17193f] px-2 py-0.5 text-[10px] font-extrabold text-[#f3d97f] ring-1 ring-white/30">
-                  <Crown className="h-3 w-3" /> {t("premium.badge")}
+                  <Crown className="h-3 w-3" /> {me?.premiumTier === "vip" ? t("premium.vip") : t("premium.badge")}
                 </span>
               )}
             </div>
@@ -259,9 +280,14 @@ export default function ProfileScreen() {
           <Stat value={stats?.followers} label={t("profile.followers")} onClick={() => router.push("/follows?tab=followers")} />
           <span className="my-2 w-px bg-white/15" />
           <Stat value={stats?.following} label={t("profile.following")} onClick={() => router.push("/follows?tab=following")} />
-          <span className="my-2 w-px bg-white/15" />
-          <Stat value={stats?.profileViews} label={t("profile.views")} onClick={openViewers} />
+          {/* The Views COUNT was removed from this row on request. */}
         </div>
+
+        {/* Removing the count would otherwise orphan the "Who viewed you" list, so it
+            keeps a small doorway of its own — no number attached. */}
+        <button onClick={openViewers} className="mx-auto mt-2 block text-[11.5px] font-bold text-white/70 underline-offset-2 hover:underline">
+          {t("profile.viewers")}
+        </button>
 
       </div>
 
@@ -320,18 +346,42 @@ export default function ProfileScreen() {
                 <span className="text-[10px] font-bold">{t("posts.add")}</span>
               </span>
             </button>
-            {myPosts.map((p) => (
-              <button key={p.id} onClick={() => router.push(`/post/${p.id}`)} className="relative aspect-square overflow-hidden rounded-2xl bg-slate-900 active:scale-95">
-                {p.kind === "video" ? (
-                  <video src={p.mediaUrl} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.mediaUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                )}
-              </button>
+            {myPosts.map((p, i) => (
+              /* A plain <div>, not a <button>: the delete badge is a button of its own
+                 and nesting buttons is invalid HTML (the inner one stops working). */
+              <div key={p.id} className="relative aspect-square overflow-hidden rounded-2xl bg-slate-900">
+                <button onClick={() => setViewerAt(i)} className="absolute inset-0 h-full w-full active:scale-95">
+                  {p.kind === "video" ? (
+                    <video src={p.mediaUrl} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={p.mediaUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                  )}
+                </button>
+                {/* delete, right on the thumbnail — one tap, no need to open the post */}
+                <button
+                  onClick={() => deletePost(p.id)}
+                  aria-label={t("post.delete")}
+                  className="absolute end-1.5 top-1.5 z-10 grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white backdrop-blur active:scale-90"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </Section>
+        {viewerAt !== null && (
+          <MediaViewer
+            items={myPosts}
+            startIndex={viewerAt}
+            onClose={() => setViewerAt(null)}
+            onToast={flash}
+            onLikeChange={(id, liked, likes) =>
+              setMyPosts((ps) => ps.map((p) => (p.id === id ? { ...p, likedByMe: liked, likes } : p)))
+            }
+            onDeleted={(id) => setMyPosts((ps) => ps.filter((p) => p.id !== id))}
+          />
+        )}
         <input ref={postInputRef} type="file" accept="image/*,video/*" hidden onChange={publishPost} />
 
 

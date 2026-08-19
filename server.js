@@ -28,8 +28,34 @@ function serveUpload(req, res, pathname) {
       return;
     }
     res.setHeader("Content-Type", MIME[path.extname(name).toLowerCase()] || "application/octet-stream");
-    res.setHeader("Content-Length", st.size);
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    // Advertise byte-range support — required by Safari/iOS to play video, and needed for
+    // seeking and reliable playback in every browser.
+    res.setHeader("Accept-Ranges", "bytes");
+
+    const range = req.headers.range;
+    const m = range && /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (m) {
+      let start = m[1] === "" ? undefined : parseInt(m[1], 10);
+      let end = m[2] === "" ? undefined : parseInt(m[2], 10);
+      if (start === undefined && end !== undefined) { start = st.size - end; end = st.size - 1; } // suffix range
+      else { if (start === undefined) start = 0; if (end === undefined) end = st.size - 1; }
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start < 0 || end >= st.size) {
+        res.statusCode = 416; // Range Not Satisfiable
+        res.setHeader("Content-Range", `bytes */${st.size}`);
+        res.end();
+        return;
+      }
+      res.statusCode = 206; // Partial Content
+      res.setHeader("Content-Range", `bytes ${start}-${end}/${st.size}`);
+      res.setHeader("Content-Length", end - start + 1);
+      if (req.method === "HEAD") { res.end(); return; }
+      fs.createReadStream(file, { start, end }).pipe(res);
+      return;
+    }
+
+    res.setHeader("Content-Length", st.size);
+    if (req.method === "HEAD") { res.end(); return; }
     fs.createReadStream(file).pipe(res);
   });
 }
@@ -126,11 +152,41 @@ app.prepare().then(() => {
         onlineCount.delete(uid);
         prisma.user.update({ where: { id: uid }, data: { online: false } }).catch(() => {});
         io.emit("presence:update", { userId: uid, online: false });
+
+        // Room cleanup: going fully offline removes the user from any live room (frees the
+        // seat, no ghost), and a host going offline ends their live rooms.
+        (async () => {
+          try {
+            const hosted = await prisma.meeting.findMany({ where: { hostId: uid, status: "live" }, select: { id: true } });
+            if (hosted.length) {
+              await prisma.meeting.updateMany({ where: { id: { in: hosted.map((m) => m.id) } }, data: { status: "ended" } });
+              hosted.forEach((m) => io.to(`meet:${m.id}`).emit("meeting:ended", { meetingId: m.id }));
+            }
+            await prisma.meetingParticipant.deleteMany({ where: { userId: uid, meeting: { status: "live" } } });
+          } catch { /* best effort */ }
+        })();
       } else {
         onlineCount.set(uid, n);
       }
     });
   });
+
+  // ---- Rooms end when their time is up. Nothing else reliably closes a live room (a host
+  // who just closes the tab never calls /leave), so this makes `endsAt` actually mean it. ----
+  async function sweepMeetings() {
+    try {
+      const due = await prisma.meeting.findMany({ where: { status: "live", endsAt: { not: null, lte: new Date() } }, select: { id: true } });
+      if (!due.length) return;
+      const ids = due.map((m) => m.id);
+      await prisma.meeting.updateMany({ where: { id: { in: ids } }, data: { status: "ended" } });
+      ids.forEach((mid) => io.to(`meet:${mid}`).emit("meeting:ended", { meetingId: mid }));
+      console.log(`> meetings: ended ${ids.length} expired room(s)`);
+    } catch (e) {
+      console.error("meetings sweep failed", e && e.message);
+    }
+  }
+  sweepMeetings();
+  setInterval(sweepMeetings, 60 * 1000); // every minute — rooms shouldn't overrun by much
 
   // ---- Stories live exactly 24h. Once expired, delete the row AND the file on disk,
   // unless the same file is still used by a post, a message, an ad or an avatar. ----
@@ -272,32 +328,15 @@ app.prepare().then(() => {
         await prisma.notification.create({ data: { userId: u.id, kind: u.autoRenew ? "sub_renewing" : "sub_ending" } }).catch(() => {});
       }
 
-      // premium that reached its end: rebill (fake gateway) or lapse
+      // Premium that reached its end simply LAPSES. Real renewals come from the app store's
+      // billing (a verified store notification re-activates), never from a free timer here.
       const due = await prisma.user.findMany({
         where: { isPremium: true, premiumUntil: { not: null, lte: now } },
-        select: { id: true, autoRenew: true, premiumUntil: true, renewMonths: true },
+        select: { id: true },
       });
-      if (due.length) {
-        const s = await prisma.appSettings.findUnique({ where: { id: "app" } }).catch(() => null);
-        const tier = (m) =>
-          m === 3 ? (s?.priceSub3m ?? 13.99)
-          : m === 6 ? (s?.priceSub6m ?? 26.99)
-          : m === 12 ? (s?.priceSub12m ?? 53.99)
-          : (s?.priceSubscription ?? 4.99) * Math.max(1, m || 1);
-        for (const u of due) {
-          if (u.autoRenew) {
-            const months = u.renewMonths || 1;
-            const until = new Date(Math.max(u.premiumUntil.getTime(), Date.now()) + months * 30 * 24 * 60 * 60 * 1000);
-            await prisma.subscription
-              .create({ data: { userId: u.id, plan: "premium", amount: tier(months), currency: "USD", expiresAt: until } })
-              .catch(() => {});
-            await prisma.user.update({ where: { id: u.id }, data: { premiumUntil: until, subRenewNotified: false } }).catch(() => {});
-            await prisma.notification.create({ data: { userId: u.id, kind: "sub_renewed", data: String(months) } }).catch(() => {});
-          } else {
-            await prisma.user.update({ where: { id: u.id }, data: { isPremium: false, subRenewNotified: false } }).catch(() => {});
-            await prisma.notification.create({ data: { userId: u.id, kind: "sub_ended", data: null } }).catch(() => {});
-          }
-        }
+      for (const u of due) {
+        await prisma.user.update({ where: { id: u.id }, data: { isPremium: false, premiumTier: "basic", subRenewNotified: false } }).catch(() => {});
+        await prisma.notification.create({ data: { userId: u.id, kind: "sub_ended", data: null } }).catch(() => {});
       }
 
       const warned = ads.length + jobs.length + seekers.length + subsSoon.length;
@@ -308,6 +347,44 @@ app.prepare().then(() => {
   }
   sweepRenewals();
   setInterval(sweepRenewals, 60 * 60 * 1000); // every hour
+
+  // ---- AI companion absence check-ins: an "are you ok?" ping after 8h away,
+  // then a follow-up after 24h. Each fires once per absence; returning clears them. ----
+  async function sweepCheckins() {
+    try {
+      // only when the AI assistant is enabled from the dashboard
+      const s = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { aiEnabled: true } }).catch(() => null);
+      if (s && s.aiEnabled === false) return;
+
+      const now = Date.now();
+      const eightAgo = new Date(now - 8 * 60 * 60 * 1000);
+      const dayAgo = new Date(now - 24 * 60 * 60 * 1000);
+
+      const due8 = await prisma.user.findMany({
+        where: { isAdmin: false, lastSeenAt: { not: null, lt: eightAgo, gte: dayAgo }, checkin8Sent: false },
+        select: { id: true },
+      });
+      for (const u of due8) {
+        await prisma.user.update({ where: { id: u.id }, data: { checkin8Sent: true } }).catch(() => {});
+        await prisma.notification.create({ data: { userId: u.id, kind: "ai_checkin", data: "8" } }).catch(() => {});
+      }
+
+      const due24 = await prisma.user.findMany({
+        where: { isAdmin: false, lastSeenAt: { not: null, lt: dayAgo }, checkin24Sent: false },
+        select: { id: true },
+      });
+      for (const u of due24) {
+        await prisma.user.update({ where: { id: u.id }, data: { checkin24Sent: true } }).catch(() => {});
+        await prisma.notification.create({ data: { userId: u.id, kind: "ai_checkin", data: "24" } }).catch(() => {});
+      }
+
+      if (due8.length || due24.length) console.log(`> check-ins: 8h=${due8.length}, 24h=${due24.length}`);
+    } catch (e) {
+      console.error("check-ins sweep failed", e && e.message);
+    }
+  }
+  sweepCheckins();
+  setInterval(sweepCheckins, 30 * 60 * 1000); // every 30 minutes
 
   const port = process.env.PORT || 3000;
   server.listen(port, () => console.log(`> Herot ready on http://localhost:${port}`));

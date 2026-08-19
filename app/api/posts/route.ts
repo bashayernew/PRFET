@@ -14,15 +14,33 @@ const createSchema = z.object({
 
 const userSel = { id: true, displayName: true, avatarUrl: true, category: true, bio: true, isPremium: true, textColor: true } as const;
 
-// GET /api/posts — newest posts (optionally one user's), with like/comment counts.
+// GET /api/posts — newest posts, with like/comment counts.
+//   ?userId=…    one person's posts (their profile grid)
+//   ?feed=following  only people I follow, plus my own — the home feed
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const userId = url.searchParams.get("userId") || undefined;
+  const followingOnly = url.searchParams.get("feed") === "following";
   const token = bearerFromRequest(req);
   const me = token ? verifyAccessToken(token)?.sub : undefined;
 
+  /**
+   * The home feed is a FOLLOWING feed, not a global one: people discover new accounts on
+   * the Discover page and choose to follow them. Filtered here rather than in the browser
+   * so we never ship posts the person shouldn't be seeing.
+   */
+  let where: Record<string, unknown> = userId ? { userId } : {};
+  if (!userId && followingOnly) {
+    if (!me) {
+      // Signed out: nothing to personalise, so show nothing rather than everything.
+      return NextResponse.json({ posts: [] });
+    }
+    const follows = await prisma.follow.findMany({ where: { userId: me }, select: { targetId: true } });
+    where = { userId: { in: [...follows.map((f) => f.targetId), me] } };
+  }
+
   const posts = await prisma.post.findMany({
-    where: userId ? { userId } : {},
+    where,
     orderBy: { createdAt: "desc" },
     take: 50,
     include: {

@@ -15,6 +15,7 @@ import {
   MessageCircle,
   ChevronDown,
   Trash2,
+  Sparkles,
 } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { COUNTRIES } from "@/lib/countries";
@@ -64,6 +65,8 @@ export default function AdsScreen() {
   const [durOpen, setDurOpen] = useState(false);
   const [sumOpen, setSumOpen] = useState(false);
   const [caption, setCaption] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiImgBusy, setAiImgBusy] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileObj, setFileObj] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -115,6 +118,41 @@ export default function AdsScreen() {
 
   const total = adTotal(countries.length, duration).toFixed(2);
   const countryOf = (code: string) => COUNTRIES.find((c) => c.code === code);
+
+  // Free "Write with AI" — turns a short idea (or the current text) into an ad caption.
+  async function aiWrite() {
+    if (aiBusy) return;
+    const brief = caption.trim() || (typeof window !== "undefined" ? window.prompt(t("ai.adPrompt")) || "" : "");
+    if (!brief.trim()) return;
+    setAiBusy(true);
+    const token = getAccessToken() || undefined;
+    const res = await apiPost<{ text?: string; error?: string }>("/api/ai/generate", { kind: "ad_caption", prompt: brief.trim() }, token);
+    setAiBusy(false);
+    if (res.ok && res.data?.text) setCaption(res.data.text);
+    else { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); }
+  }
+
+  // Free "Generate image with AI" — makes an ad image from a short idea.
+  async function aiImage() {
+    if (aiImgBusy) return;
+    const brief = caption.trim() || (typeof window !== "undefined" ? window.prompt(t("ai.adPrompt")) || "" : "");
+    if (!brief.trim()) return;
+    setAiImgBusy(true);
+    const token = getAccessToken() || undefined;
+    const res = await apiPost<{ url?: string }>("/api/ai/image", { prompt: `Advertising image, high quality, eye-catching: ${brief.trim()}` }, token);
+    setAiImgBusy(false);
+    if (res.ok && res.data?.url) {
+      try {
+        const blob = await (await fetch(res.data.url)).blob();
+        const file = new File([blob], "ai-ad.png", { type: blob.type || "image/png" });
+        setFileObj(file);
+        setFileName(file.name);
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setPreviewUrl(res.data.url);
+        setPreviewKind("image");
+      } catch { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); }
+    } else { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); }
+  }
 
   async function publish() {
     const token = getAccessToken() || undefined;
@@ -294,8 +332,12 @@ export default function AdsScreen() {
             onChange={(e) => setCaption(e.target.value)}
             placeholder={t("ads.textPh")}
             rows={2}
-            className="mb-5 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-[14px] font-medium text-ink outline-none transition-colors placeholder:font-normal placeholder:text-muted focus:border-brand-500"
+            className="mb-2 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 py-2.5 text-[14px] font-medium text-ink outline-none transition-colors placeholder:font-normal placeholder:text-muted focus:border-brand-500"
           />
+          <button onClick={aiWrite} disabled={aiBusy}
+            className="mb-5 flex items-center gap-1.5 rounded-full bg-brand-50 px-3.5 py-2 text-[12.5px] font-extrabold text-brand-700 ring-1 ring-brand-200 hover:bg-brand-100 disabled:opacity-50 active:scale-95">
+            <Sparkles className="h-4 w-4" /> {aiBusy ? t("ai.writing") : t("ai.write")}
+          </button>
 
           {/* targeting + duration — rectangular dropdowns side by side */}
           <div className="mb-3 grid grid-cols-2 gap-3">
@@ -428,6 +470,12 @@ export default function AdsScreen() {
                 <span className="text-[11px] text-muted">{t("ads.uploadHint")}</span>
               </>
             )}
+          </button>
+
+          {/* generate the ad image with AI */}
+          <button onClick={aiImage} disabled={aiImgBusy}
+            className="mb-5 -mt-3 flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12.5px] font-extrabold text-amber-600 ring-1 ring-amber-200 hover:bg-amber-100 disabled:opacity-50 active:scale-95">
+            <Sparkles className="h-4 w-4" /> {aiImgBusy ? t("ai.writing") : t("ai.makeImage")}
           </button>
 
           {/* summary */}

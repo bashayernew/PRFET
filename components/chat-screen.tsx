@@ -36,7 +36,7 @@ import CallOverlay from "@/components/call-overlay";
 import { vipBubble, vipStyle } from "@/lib/vip";
 import type { FeedPost } from "@/lib/posts";
 
-type Kind = "text" | "image" | "voice" | "video" | "location" | "gift";
+type Kind = "text" | "image" | "voice" | "video" | "location" | "gift" | "call";
 type Msg = { id: string; body: string; mine: boolean; at: string; kind: Kind; mediaUrl?: string | null; system?: boolean; deleted?: boolean; viewOnce?: boolean; expired?: boolean; allowSave?: boolean };
 type ApiMsg = { id: string; fromMe: boolean; body: string; kind: Kind; mediaUrl?: string | null; createdAt: string; deleted?: boolean; viewOnce?: boolean; expired?: boolean; allowSave?: boolean };
 
@@ -574,6 +574,22 @@ export default function ChatScreen({ id }: { id: string }) {
 
 function MessageBody({ m, t, opened, onOpenOnce }: { m: Msg; t: (k: string) => string; opened?: boolean; onOpenOnce?: () => void }) {
   const isMedia = (m.kind === "image" || m.kind === "video" || m.kind === "voice");
+
+  // A finished call, shown the way a phone's call history does. `body` is the duration
+  // in seconds; 0 means it never connected (declined or unanswered).
+  if (m.kind === "call") {
+    const secs = parseInt(m.body || "0", 10) || 0;
+    const mm = Math.floor(secs / 60);
+    const ss = secs % 60;
+    const label = secs > 0
+      ? `${t(m.mine ? "call.outgoing" : "call.incoming2")} · ${mm}:${String(ss).padStart(2, "0")}`
+      : t(m.mine ? "call.noAnswer" : "call.missed");
+    return (
+      <p className={`flex items-center gap-2 text-[13.5px] font-bold ${secs > 0 ? "" : "text-red-500"}`}>
+        <Phone className="h-4 w-4" /> {label}
+      </p>
+    );
+  }
 
   // View-once handling for RECEIVED media.
   if (isMedia && m.viewOnce && !m.mine) {

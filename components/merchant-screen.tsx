@@ -60,6 +60,7 @@ type RealUser = {
   social2: string | null;
   social3: string | null;
   liveId: string | null;
+  liveTitle?: string | null;
   // sponsor & branches (admin-managed)
   isSponsor?: boolean;
   promoVideoUrl?: string | null;
@@ -100,7 +101,7 @@ function buildView(id: string, real: RealUser | null, sample?: Business): Busine
   };
 }
 
-export default function MerchantScreen({ id }: { id: string }) {
+export default function MerchantScreen({ id, sponsor = false }: { id: string; sponsor?: boolean }) {
   const router = useRouter();
   const { t, dir, locale } = useI18n();
   const ready = useRequireAuth();
@@ -303,7 +304,13 @@ export default function MerchantScreen({ id }: { id: string }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <h1 className="truncate text-[19px] font-extrabold text-white" style={isAdmin ? { color: "#f3d97f" } : vipStyle(real)}>{name}</h1>
-                {premium && (
+                {sponsor && (
+                  <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold text-white ring-1 ring-white/40">
+                    <Crown className="h-3 w-3" />
+                    {t("sponsor.badge")}
+                  </span>
+                )}
+                {premium && !sponsor && (
                   <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#17193f] px-2 py-0.5 text-[10px] font-extrabold text-[#f3d97f] ring-1 ring-white/30">
                     <Crown className="h-3 w-3" />
                     {t("merchant.vip")}
@@ -446,6 +453,27 @@ export default function MerchantScreen({ id }: { id: string }) {
             className="mx-5 mt-4 flex w-[calc(100%-2.5rem)] items-center gap-2 rounded-2xl bg-brand-50 px-4 py-3 text-start ring-1 ring-brand-200 active:scale-[0.99]">
             <Store className="h-4 w-4 shrink-0 text-brand-600" />
             <p className="flex-1 text-[13px] font-bold text-brand-700">{t("sponsor.branchOf")} {real.parent.name}</p>
+          </button>
+        )}
+
+        {/* live room — a big media tile like the pinned video; one tap enters full-screen */}
+        {real?.liveId && (
+          <button
+            onClick={() => router.push(`/meetings/${real.liveId}`)}
+            className="mx-5 mt-4 block w-[calc(100%-2.5rem)] overflow-hidden rounded-3xl bg-black text-start ring-1 ring-white/10 active:scale-[0.99]"
+          >
+            <div className="relative grid h-56 place-items-center bg-gradient-to-br from-rose-900/70 via-[#1b0d1a] to-black">
+              <span className="absolute start-4 top-4 flex items-center gap-1.5 rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-extrabold text-white shadow">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> {t("live.nowTitle")}
+              </span>
+              <div className="flex flex-col items-center gap-2.5 text-white">
+                <span className="grid h-16 w-16 place-items-center rounded-full bg-white/15 ring-2 ring-white/30">
+                  <span className="h-3.5 w-3.5 animate-pulse rounded-full bg-red-500" />
+                </span>
+                <p className="max-w-[240px] truncate text-[15px] font-extrabold">{real.liveTitle || t("meet.roomTitle")}</p>
+                <span className="rounded-full bg-white px-5 py-1.5 text-[12.5px] font-extrabold text-black">{t("live.join")}</span>
+              </div>
+            </div>
           </button>
         )}
 

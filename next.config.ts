@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Skip type-checking and linting during `next build` — they're memory-heavy and are
+  // handled in dev/CI instead. This keeps production builds fast and reliable on small boxes.
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
   // 'export' makes a static build that Capacitor wraps into iOS/Android apps.
   // Keep commented for normal `npm run dev`; uncomment when building native apps.
   // output: "export",

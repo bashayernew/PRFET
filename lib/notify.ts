@@ -20,7 +20,7 @@ export type NotifyOpts = {
 
 /** Where tapping this notification should take you. */
 function linkFor(kind: string, targetId?: string | null, actorId?: string | null) {
-  if (kind === "new_message" || kind === "missed_call" || kind === "gift_premium") return actorId ? `/messages/${actorId}` : "/messages";
+  if (kind === "new_message" || kind === "missed_call" || kind === "incoming_call" || kind === "gift_premium") return actorId ? `/messages/${actorId}` : "/messages";
   if (kind.startsWith("post_")) return targetId ? `/post/${targetId}` : "/home";
   if (kind === "meeting_invite") return targetId ? `/meetings/${targetId}` : "/meetings";
   if (kind === "job_application") return targetId ? `/job/${targetId}` : "/jobs";
@@ -48,6 +48,8 @@ function phrase(kind: string, locale: string, actor: string, text?: string | nul
       return { title: ar ? "دعوة لغرفة" : "Room invite", body: ar ? `${actor} دعاك إلى «${cut(text)}»` : `${actor} invited you to “${cut(text)}”` };
     case "missed_call":
       return { title: ar ? "مكالمة فائتة" : "Missed call", body: ar ? `مكالمة فائتة من ${actor}` : `Missed call from ${actor}` };
+    case "incoming_call":
+      return { title: ar ? "مكالمة واردة 📞" : "Incoming call 📞", body: ar ? `${actor} يتصل بك الآن` : `${actor} is calling you` };
     case "job_application":
       return { title: ar ? "طلب توظيف جديد" : "New application", body: ar ? `${actor} تقدّم لوظيفة «${cut(text)}»` : `${actor} applied for “${cut(text)}”` };
     case "gift_premium":

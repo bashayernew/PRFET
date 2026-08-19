@@ -8,6 +8,7 @@ import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 const schema = z.object({
   title: z.string().min(2).max(120),
   companyName: z.string().max(120).optional(),
+  description: z.string().max(4000).optional(),
   imageUrl: z.string().max(500).optional(),
   catKey: z.string().max(40).optional(),
   typeKey: z.enum(["full", "part", "remote"]).default("full"),
@@ -72,6 +73,7 @@ export async function GET(req: Request) {
       companyName: j.companyName ?? j.company?.displayName ?? "",
       imageUrl: j.imageUrl,
       title: j.title,
+      description: j.description,
       catKey: j.catKey,
       typeKey: j.typeKey,
       degree: j.degree,
@@ -117,6 +119,7 @@ export async function POST(req: Request) {
       companyId: payload.sub,
       title: d.title.trim(),
       companyName: d.companyName?.trim() || null,
+      description: d.description?.trim() || null,
       imageUrl: d.imageUrl ?? null,
       catKey: d.catKey ?? null,
       typeKey: d.typeKey,

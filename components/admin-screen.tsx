@@ -23,10 +23,17 @@ type Settings = {
   address: string;
   closedCountries: string; // CSV of ISO codes the admin switched off
   sponsorName: string; sponsorLogo: string; sponsorText: string; sponsorUrl: string;
-  priceSubscription: number; priceSub3m: number; priceSub6m: number; priceSub12m: number; // USD bundles
+  priceSubscription: number; priceSub3m: number; priceSub6m: number; priceSub12m: number; priceVip: number; // USD bundles
   priceJobApply: number; priceJobPost: number; priceSeekerAd: number;
   priceAdBase: number; priceAdExtraCountry: number; priceAdExtraDay: number; // USD, ad formula
   subEnabled: boolean; adsEnabled: boolean; jobsEnabled: boolean; // master on/off switches
+  aiImagesBasic: number; aiImagesVip: number; aiVideosBasic: number; aiVideosVip: number; // monthly AI caps (0 = unlimited)
+  aiMessagesBasic: number; aiMessagesVip: number; // monthly assistant-message caps (0 = unlimited)
+  storageGbBasic: number; storageGbVip: number; // media storage caps in GB (0 = unlimited)
+  callMinutesBasic: number; callMinutesVip: number; // monthly AI-voice caps in minutes (0 = unlimited)
+  vaultEnabled: boolean; // the personal vault feature
+  priceAddonVoice: number; priceAddonMedia: number; priceAddonStorage: number; // add-on pack prices (USD)
+  aiEnabled: boolean; aiPremiumOnly: boolean; // assistant on/off, and paid-only
 };
 
 const EMPTY: Settings = {
@@ -38,10 +45,17 @@ const EMPTY: Settings = {
   address: "",
   closedCountries: "",
   sponsorName: "", sponsorLogo: "", sponsorText: "", sponsorUrl: "",
-  priceSubscription: 4.99, priceSub3m: 13.99, priceSub6m: 26.99, priceSub12m: 53.99,
+  priceSubscription: 4.99, priceSub3m: 13.99, priceSub6m: 26.99, priceSub12m: 53.99, priceVip: 9.99,
   priceJobApply: 0, priceJobPost: 1.99, priceSeekerAd: 0.99,
-  priceAdBase: 49.99, priceAdExtraCountry: 15, priceAdExtraDay: 11,
+  priceAdBase: 14.99, priceAdExtraCountry: 1, priceAdExtraDay: 2,
   subEnabled: true, adsEnabled: true, jobsEnabled: true,
+  aiImagesBasic: 35, aiImagesVip: 100, aiVideosBasic: 9, aiVideosVip: 20,
+  aiMessagesBasic: 4000, aiMessagesVip: 7500,
+  storageGbBasic: 25, storageGbVip: 50,
+  callMinutesBasic: 2000, callMinutesVip: 480,
+  vaultEnabled: true,
+  priceAddonVoice: 1.99, priceAddonMedia: 1.99, priceAddonStorage: 1.99,
+  aiEnabled: true, aiPremiumOnly: true,
 };
 
 /** Shrink an uploaded photo to a 256px JPEG data URL — same treatment as member avatars. */
@@ -81,7 +95,7 @@ type Rep = {
   reporter: RepUser | null; target: RepUser | null; mediaUrl: string | null; contentText: string | null;
 };
 
-type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "invoices" | "broadcast" | "page";
+type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "invoices" | "broadcast" | "subscription" | "page";
 
 type Invoice = {
   id: string; number: string; customerName: string; kind: string;
@@ -121,6 +135,25 @@ export default function AdminScreen() {
   const ready = useRequireAuth();
 
   const [allowed, setAllowed] = useState<boolean | null>(null);
+  /**
+   * Second lock. Held in component state ONLY — never in localStorage/sessionStorage —
+   * so closing the tab, reloading, or pasting the /admin URL always asks again, even
+   * though the person is still signed in as an admin.
+   */
+  const [unlocked, setUnlocked] = useState(false);
+  const [gateEmail, setGateEmail] = useState(""); // used by the master/break-glass login
+  const [gatePass, setGatePass] = useState("");
+  const [gateErr, setGateErr] = useState(false);
+  const [gateBusy, setGateBusy] = useState(false);
+  const [usingDefaultPass, setUsingDefaultPass] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false); // reset panel on the lock screen
+  // change / reset dashboard password — email + verification code
+  const [passEmail, setPassEmail] = useState("");
+  const [passCode, setPassCode] = useState("");
+  const [passNew, setPassNew] = useState("");
+  const [passBusy, setPassBusy] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
+  const [passDevCode, setPassDevCode] = useState(""); // shown only if email delivery failed
   const [isOwner, setIsOwner] = useState(false); // THE owner sees admin management + the approval queue
   const [grantReqs, setGrantReqs] = useState<{ id: string; requester: { id: string; name: string }; target: { id: string; name: string; avatarUrl: string | null }; months: number | null; until: string | null }[]>([]);
   const [adminIds, setAdminIds] = useState<Set<string>>(new Set());
@@ -565,14 +598,151 @@ export default function AdminScreen() {
   function set<K extends keyof Settings>(k: K, v: Settings[K]) { setS((prev) => ({ ...prev, [k]: v })); }
 
   /** Master feature switch — applies immediately (not waiting for the Save button). */
-  async function toggleFeature(k: "subEnabled" | "adsEnabled" | "jobsEnabled", next: boolean) {
+  async function toggleFeature(k: "subEnabled" | "adsEnabled" | "jobsEnabled" | "aiEnabled" | "aiPremiumOnly" | "vaultEnabled", next: boolean) {
     set(k, next);
     const res = await apiPatch<{ settings?: Settings }>("/api/settings", { [k]: next }, getAccessToken() || undefined);
     if (res.ok) flash(t("admin.saved"));
     else { set(k, !next); flash(t("common.error")); }
   }
 
+  // Step 1: email a verification code to the dashboard email (or a new one being set).
+  async function sendPassCode() {
+    if (passBusy) return;
+    setPassBusy(true);
+    setPassDevCode("");
+    const res = await apiPost<{ ok?: boolean; sent?: boolean; devCode?: string }>(
+      "/api/admin/gate/otp", passEmail.trim() ? { email: passEmail.trim() } : {}, getAccessToken() || undefined
+    );
+    setPassBusy(false);
+    if (res.ok && res.data?.ok) {
+      setCodeSent(true);
+      if (res.data.devCode) setPassDevCode(res.data.devCode); // email wasn't deliverable
+      flash(res.data.sent ? t("adm.codeSent") : t("adm.codeShown"));
+    } else {
+      flash(res.status === 400 ? t("adm.emailNeeded") : t("common.error"));
+    }
+  }
+
+  // Step 2: verify the code + set the new password (and email, if it was changed).
+  async function changeAdminPass() {
+    if (passBusy || passCode.length < 4 || passNew.length < 6) return;
+    setPassBusy(true);
+    const res = await apiPatch("/api/admin/gate", {
+      code: passCode.trim(), next: passNew,
+      ...(passEmail.trim() ? { email: passEmail.trim() } : {}),
+    }, getAccessToken() || undefined);
+    setPassBusy(false);
+    if (res.ok) {
+      setPassCode(""); setPassNew(""); setCodeSent(false); setPassDevCode(""); setUsingDefaultPass(false);
+      flash(t("adm.passChanged"));
+    } else {
+      flash(res.status === 401 ? t("adm.codeWrong") : res.status === 400 ? t("adm.codeExpired") : t("common.error"));
+    }
+  }
+
+  async function submitGate(e: React.FormEvent) {
+    e.preventDefault();
+    if (gateBusy || !gatePass) return;
+    setGateBusy(true);
+    setGateErr(false);
+    const res = await apiPost<{ ok?: boolean; isDefault?: boolean }>(
+      "/api/admin/gate", { password: gatePass, ...(gateEmail.trim() ? { email: gateEmail.trim() } : {}) }, getAccessToken() || undefined
+    );
+    setGateBusy(false);
+    if (res.ok && res.data?.ok) {
+      setUsingDefaultPass(!!res.data.isDefault);
+      setGatePass("");
+      setUnlocked(true);
+    } else {
+      setGateErr(true);
+      setGatePass("");
+    }
+  }
+
   if (!ready || allowed !== true) return null;
+
+  // ===== the lock screen — shown every time the dashboard is opened =====
+  if (!unlocked) {
+    return (
+      <div dir={dir} className="grid min-h-[100dvh] place-items-center bg-[#131743] px-5">
+        <form onSubmit={submitGate} className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl">
+          <span className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-brand-50 text-brand-700">
+            <Lock className="h-7 w-7" />
+          </span>
+          <p className="text-center text-[17px] font-extrabold text-ink">{t("adm.lockTitle")}</p>
+          <p className="mt-1 text-center text-[12.5px] font-medium text-muted">{t("adm.lockHint")}</p>
+
+          {!forgotOpen ? (
+            <>
+              <input
+                type="email"
+                value={gateEmail}
+                onChange={(e) => { setGateEmail(e.target.value); setGateErr(false); }}
+                placeholder={t("adm.lockEmail")}
+                dir="ltr"
+                autoComplete="username"
+                className="mt-4 h-12 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 text-center text-[14px] font-bold text-ink outline-none focus:border-brand-500"
+              />
+              <input
+                type="password"
+                value={gatePass}
+                onChange={(e) => { setGatePass(e.target.value); setGateErr(false); }}
+                placeholder={t("adm.lockPlaceholder")}
+                autoComplete="current-password"
+                className={`mt-2 h-12 w-full rounded-2xl border-2 bg-white px-4 text-center text-[15px] font-bold text-ink outline-none ${gateErr ? "border-red-400" : "border-slate-200 focus:border-brand-500"}`}
+              />
+              {gateErr && <p className="mt-2 text-center text-[12.5px] font-bold text-red-500">{t("adm.lockWrong")}</p>}
+              <button
+                type="submit"
+                disabled={gateBusy || !gatePass}
+                className="mt-4 h-12 w-full rounded-2xl bg-brand-600 text-[14px] font-extrabold text-white disabled:opacity-50"
+              >
+                {gateBusy ? "…" : t("adm.lockEnter")}
+              </button>
+              <button type="button" onClick={() => { setForgotOpen(true); setPassEmail(gateEmail); }}
+                className="mt-2 h-10 w-full rounded-2xl text-[12.5px] font-bold text-brand-600">
+                {t("adm.forgot")}
+              </button>
+              <button type="button" onClick={() => router.replace("/home")}
+                className="h-10 w-full rounded-2xl text-[13px] font-bold text-muted">
+                {t("common.cancel")}
+              </button>
+            </>
+          ) : (
+            /* forgot / reset — code to the dashboard email, then a new password */
+            <div className="mt-4 flex flex-col gap-2">
+              <input type="email" value={passEmail} onChange={(e) => setPassEmail(e.target.value)} dir="ltr"
+                placeholder={t("adm.dashEmail")}
+                className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 text-center text-[14px] font-bold text-ink outline-none focus:border-brand-500" />
+              <button type="button" onClick={sendPassCode} disabled={passBusy}
+                className="h-11 w-full rounded-2xl bg-slate-100 text-[13px] font-extrabold text-ink disabled:opacity-50">
+                {codeSent ? t("adm.codeResend") : t("adm.sendCode")}
+              </button>
+              {passDevCode && <p className="text-center text-[12px] font-bold text-amber-600">{t("adm.codeShown")}: {passDevCode}</p>}
+              {codeSent && (
+                <>
+                  <input value={passCode} onChange={(e) => setPassCode(e.target.value)} inputMode="numeric" dir="ltr"
+                    placeholder={t("adm.code")}
+                    className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 text-center text-[15px] font-bold text-ink outline-none focus:border-brand-500" />
+                  <input type="password" value={passNew} onChange={(e) => setPassNew(e.target.value)}
+                    placeholder={t("adm.newPass")}
+                    className="h-12 w-full rounded-2xl border-2 border-slate-200 bg-white px-4 text-center text-[15px] font-bold text-ink outline-none focus:border-brand-500" />
+                  <button type="button" onClick={changeAdminPass} disabled={passBusy || passCode.length < 4 || passNew.length < 6}
+                    className="h-12 w-full rounded-2xl bg-brand-600 text-[14px] font-extrabold text-white disabled:opacity-50">
+                    {t("adm.saveNewPass")}
+                  </button>
+                </>
+              )}
+              <button type="button" onClick={() => { setForgotOpen(false); setCodeSent(false); }}
+                className="h-10 w-full rounded-2xl text-[12.5px] font-bold text-muted">
+                {t("back")}
+              </button>
+            </div>
+          )}
+        </form>
+      </div>
+    );
+  }
 
   const NAV: { k: Tab; icon: React.ReactNode; label: string; badge?: number }[] = [
     { k: "stats", icon: <BarChart3 className="h-[18px] w-[18px]" />, label: t("adm.tabStats") },
@@ -583,6 +753,7 @@ export default function AdminScreen() {
     { k: "sponsor", icon: <Crown className="h-[18px] w-[18px]" />, label: t("adm.tabSponsor") },
     { k: "invoices", icon: <FileText className="h-[18px] w-[18px]" />, label: t("adm.tabInvoices") },
     { k: "broadcast", icon: <Send className="h-[18px] w-[18px]" />, label: t("adm.tabBroadcast") },
+    { k: "subscription", icon: <Crown className="h-[18px] w-[18px]" />, label: t("adm.tabSubscription") },
     { k: "page", icon: <FileText className="h-[18px] w-[18px]" />, label: t("adm.tabPage") },
   ];
 
@@ -889,32 +1060,29 @@ export default function AdminScreen() {
                     : t("adm.grantNoPremium")}
                 </p>
 
-                {/* gift a bundle — stacks on any remaining time */}
+                {/* gift a plan — Golden or VIP. Pick an optional end date first; empty = 1 month. */}
                 <p className="mb-2 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantPremium")}</p>
-                <div className="mb-3 grid grid-cols-4 gap-2">
-                  {([1, 3, 6, 12] as const).map((m) => (
-                    <button key={m} onClick={() => grant({ premiumMonths: m })} disabled={busyGrant}
-                      className="rounded-2xl border-2 border-slate-200 bg-white py-2.5 text-[12.5px] font-extrabold text-ink hover:border-amber-400 disabled:opacity-40">
-                      🎁 {t(`premium.m${m}`)}
-                    </button>
-                  ))}
-                </div>
-
-                {/* or an exact end date */}
-                <div className="mb-4 flex items-center gap-2">
+                <div className="mb-2">
                   <input type="date" value={grantDate} onChange={(e) => setGrantDate(e.target.value)} dir="ltr"
-                    className="h-11 flex-1 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
-                  <button onClick={() => { if (grantDate) grant({ premiumUntil: grantDate }); }} disabled={busyGrant || !grantDate}
-                    className="h-11 shrink-0 rounded-2xl bg-amber-500 px-4 text-[12.5px] font-extrabold text-white hover:bg-amber-600 disabled:opacity-40">
-                    {t("adm.grantUntilDate")}
-                  </button>
-                  {grantSel.isPremium && (
-                    <button onClick={() => grant({ revokePremium: true })} disabled={busyGrant}
-                      className="h-11 shrink-0 rounded-2xl bg-red-50 px-4 text-[12.5px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
-                      {t("adm.grantRevoke")}
-                    </button>
-                  )}
+                    className="h-11 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
                 </div>
+                <div className="mb-2 grid grid-cols-2 gap-2">
+                  <button onClick={() => grant(grantDate ? { premiumUntil: grantDate, premiumTier: "basic" } : { premiumMonths: 1, premiumTier: "basic" })} disabled={busyGrant}
+                    className="rounded-2xl border-2 border-slate-200 bg-white py-2.5 text-[12.5px] font-extrabold text-ink hover:border-amber-400 disabled:opacity-40">
+                    🎁 {t("premium.basic")}
+                  </button>
+                  <button onClick={() => grant(grantDate ? { premiumUntil: grantDate, premiumTier: "vip" } : { premiumMonths: 1, premiumTier: "vip" })} disabled={busyGrant}
+                    className="rounded-2xl border-2 border-amber-200 bg-amber-50 py-2.5 text-[12.5px] font-extrabold text-amber-700 hover:border-amber-400 disabled:opacity-40">
+                    🎁 {t("premium.vip")}
+                  </button>
+                </div>
+                <p className="mb-2 text-[11px] font-medium text-muted">{t("adm.giftHint")}</p>
+                {grantSel.isPremium && (
+                  <button onClick={() => grant({ revokePremium: true })} disabled={busyGrant}
+                    className="mb-4 w-full rounded-2xl bg-red-50 py-2.5 text-[12.5px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40">
+                    {t("adm.grantRevoke")}
+                  </button>
+                )}
 
                 {/* free posting credits — how many free ones the admin gifts */}
                 <p className="mb-1 text-[12px] font-extrabold uppercase tracking-wider text-muted">{t("adm.grantFreeSection")}</p>
@@ -1675,9 +1843,118 @@ export default function AdminScreen() {
           </>
         )}
 
+        {tab === "subscription" && (
+          <>
+            <h1 className="mb-6 text-[22px] font-extrabold text-ink">{t("adm.tabSubscription")}</h1>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {/* pricing + master on/off switches. A disabled feature is removed from the whole app. */}
+              <Card icon={<Crown className="h-4 w-4 text-amber-500" />} title={t("admin.pricingSection")}>
+                {/* Subscription — the switch only controls whether users can subscribe; prices stay editable either way */}
+                <FeatureRow label={t("admin.featSubscription")} on={s.subEnabled} onToggle={(v) => toggleFeature("subEnabled", v)} />
+                {/* Two plans only — Golden (monthly) and VIP (monthly). No multi-month bundles. */}
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceGolden")} value={s.priceSubscription} onChange={(v) => set("priceSubscription", v)} />
+                  <PriceField label={t("admin.priceVip")} value={s.priceVip} onChange={(v) => set("priceVip", v)} />
+                </div>
+
+                {/* Ads */}
+                <FeatureRow label={t("admin.featAds")} on={s.adsEnabled} onToggle={(v) => toggleFeature("adsEnabled", v)} />
+                <PriceField label={t("admin.priceAdBase")} value={s.priceAdBase} onChange={(v) => set("priceAdBase", v)} />
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceAdExtraCountry")} value={s.priceAdExtraCountry} onChange={(v) => set("priceAdExtraCountry", v)} />
+                  <PriceField label={t("admin.priceAdExtraDay")} value={s.priceAdExtraDay} onChange={(v) => set("priceAdExtraDay", v)} />
+                </div>
+
+                {/* Jobs */}
+                <FeatureRow label={t("admin.featJobs")} on={s.jobsEnabled} onToggle={(v) => toggleFeature("jobsEnabled", v)} />
+                <div className="grid grid-cols-2 gap-3">
+                  <PriceField label={t("admin.priceJobPost")} value={s.priceJobPost} onChange={(v) => set("priceJobPost", v)} />
+                  <PriceField label={t("admin.priceSeekerAd")} value={s.priceSeekerAd} onChange={(v) => set("priceSeekerAd", v)} />
+                </div>
+
+                {/* AI monthly caps per tier */}
+                <div className="mt-1 border-t-2 border-slate-100 pt-3">
+                  <p className="mb-2 text-[12.5px] font-extrabold text-ink">{t("admin.aiCapsTitle")}</p>
+                  <FeatureRow label={t("admin.featAi")} on={s.aiEnabled} onToggle={(v) => toggleFeature("aiEnabled", v)} />
+                  <FeatureRow label={t("admin.featAiPaid")} on={s.aiPremiumOnly} onToggle={(v) => toggleFeature("aiPremiumOnly", v)} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <CountField label={t("admin.aiImagesBasic")} value={s.aiImagesBasic} onChange={(v) => set("aiImagesBasic", v)} />
+                    <CountField label={t("admin.aiImagesVip")} value={s.aiImagesVip} onChange={(v) => set("aiImagesVip", v)} />
+                    <CountField label={t("admin.aiVideosBasic")} value={s.aiVideosBasic} onChange={(v) => set("aiVideosBasic", v)} />
+                    <CountField label={t("admin.aiVideosVip")} value={s.aiVideosVip} onChange={(v) => set("aiVideosVip", v)} />
+                    <CountField label={t("admin.aiMessagesBasic")} value={s.aiMessagesBasic} onChange={(v) => set("aiMessagesBasic", v)} />
+                    <CountField label={t("admin.aiMessagesVip")} value={s.aiMessagesVip} onChange={(v) => set("aiMessagesVip", v)} />
+                    <CountField label={t("admin.storageGbBasic")} value={s.storageGbBasic} onChange={(v) => set("storageGbBasic", v)} />
+                    <CountField label={t("admin.storageGbVip")} value={s.storageGbVip} onChange={(v) => set("storageGbVip", v)} />
+                    <CountField label={t("admin.callMinutesBasic")} value={s.callMinutesBasic} onChange={(v) => set("callMinutesBasic", v)} />
+                    <CountField label={t("admin.callMinutesVip")} value={s.callMinutesVip} onChange={(v) => set("callMinutesVip", v)} />
+                  </div>
+                  <p className="mt-2 text-[11px] font-medium leading-snug text-muted">{t("admin.aiCapsHint")}</p>
+                  <div className="mt-2">
+                    <FeatureRow label={t("admin.featVault")} on={s.vaultEnabled} onToggle={(v) => toggleFeature("vaultEnabled", v)} />
+                  </div>
+                  {/* Buyable add-on packs — prices only; what each grants is fixed */}
+                  <div className="mt-3 border-t-2 border-slate-100 pt-3">
+                    <p className="mb-2 text-[12.5px] font-extrabold text-ink">{t("admin.addonsTitle")}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <PriceField label={t("admin.priceAddonVoice")} value={s.priceAddonVoice} onChange={(v) => set("priceAddonVoice", v)} />
+                      <PriceField label={t("admin.priceAddonMedia")} value={s.priceAddonMedia} onChange={(v) => set("priceAddonMedia", v)} />
+                      <PriceField label={t("admin.priceAddonStorage")} value={s.priceAddonStorage} onChange={(v) => set("priceAddonStorage", v)} />
+                    </div>
+                    <p className="mt-2 text-[11px] font-medium leading-snug text-muted">{t("admin.addonsHint")}</p>
+                  </div>
+                </div>
+
+                <p className="text-[11px] font-medium leading-snug text-muted">{t("admin.pricingHint")}</p>
+              </Card>
+            </div>
+            <button onClick={save} disabled={busy}
+              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 text-[15px] font-extrabold text-white hover:bg-brand-700 disabled:opacity-40 active:scale-[0.99] lg:w-64">
+              <Save className="h-4 w-4" /> {t("admin.save")}
+            </button>
+          </>
+        )}
+
         {tab === "page" && (
           <>
             <h1 className="mb-6 text-[22px] font-extrabold text-ink">{t("adm.tabPage")}</h1>
+            {/* the dashboard's own password — separate from the account password */}
+            <div className="mb-4 rounded-3xl bg-white p-5 ring-1 ring-slate-200">
+              <p className="mb-1 flex items-center gap-2 text-[14px] font-extrabold text-ink">
+                <Lock className="h-4 w-4 text-brand-600" /> {t("adm.passTitle")}
+              </p>
+              <p className="mb-3 text-[12.5px] font-medium text-muted">{t("adm.passHint")}</p>
+              {usingDefaultPass && (
+                <p className="mb-3 rounded-2xl bg-amber-50 p-3 text-[12.5px] font-bold text-amber-700">{t("adm.passDefaultWarn")}</p>
+              )}
+              {/* email the code goes to (can be a new address to move the dashboard) */}
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <input type="email" value={passEmail} onChange={(e) => setPassEmail(e.target.value)} dir="ltr"
+                  placeholder={t("adm.dashEmail")}
+                  className="h-11 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500 sm:col-span-2" />
+                <button onClick={sendPassCode} disabled={passBusy}
+                  className="h-11 rounded-2xl bg-slate-100 text-[13px] font-extrabold text-ink disabled:opacity-50">
+                  {passBusy ? "…" : codeSent ? t("adm.codeResend") : t("adm.sendCode")}
+                </button>
+              </div>
+              {passDevCode && <p className="mt-2 text-[12px] font-bold text-amber-600">{t("adm.codeShown")}: {passDevCode}</p>}
+              {codeSent && (
+                <div className="mt-2.5 grid gap-2.5 sm:grid-cols-3">
+                  <input value={passCode} onChange={(e) => setPassCode(e.target.value)} inputMode="numeric" dir="ltr"
+                    placeholder={t("adm.code")}
+                    className="h-11 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <input type="password" value={passNew} onChange={(e) => setPassNew(e.target.value)}
+                    placeholder={t("adm.passNew")}
+                    className="h-11 rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[13.5px] font-medium text-ink outline-none focus:border-brand-500" />
+                  <button onClick={changeAdminPass} disabled={passBusy || passCode.length < 4 || passNew.length < 6}
+                    className="h-11 rounded-2xl bg-brand-600 text-[13px] font-extrabold text-white disabled:opacity-50">
+                    {passBusy ? "…" : t("adm.passSave")}
+                  </button>
+                </div>
+              )}
+              <p className="mt-2 text-[11.5px] font-medium text-muted">{t("adm.passRule")}</p>
+            </div>
+
             <div className="grid gap-4 lg:grid-cols-2">
               <Card icon={<Mail className="h-4 w-4 text-brand-600" />} title={t("admin.contactSection")}>
                 <Field label={t("admin.adminEmail")} value={s.adminEmail} onChange={(v) => set("adminEmail", v)} ltr />
@@ -1737,34 +2014,6 @@ export default function AdminScreen() {
                   )}
                   <p className="mt-1 text-[11px] font-medium leading-snug text-muted">{t("admin.legalAccountHint")}</p>
                 </div>
-              </Card>
-              {/* pricing + master on/off switches. A disabled feature is removed from the whole app. */}
-              <Card icon={<Crown className="h-4 w-4 text-amber-500" />} title={t("admin.pricingSection")}>
-                {/* Subscription — the switch only controls whether users can subscribe; prices stay editable either way */}
-                <FeatureRow label={t("admin.featSubscription")} on={s.subEnabled} onToggle={(v) => toggleFeature("subEnabled", v)} />
-                <div className="grid grid-cols-2 gap-3">
-                  <PriceField label={t("admin.priceSubscription")} value={s.priceSubscription} onChange={(v) => set("priceSubscription", v)} />
-                  <PriceField label={t("admin.priceSub3m")} value={s.priceSub3m} onChange={(v) => set("priceSub3m", v)} />
-                  <PriceField label={t("admin.priceSub6m")} value={s.priceSub6m} onChange={(v) => set("priceSub6m", v)} />
-                  <PriceField label={t("admin.priceSub12m")} value={s.priceSub12m} onChange={(v) => set("priceSub12m", v)} />
-                </div>
-
-                {/* Ads */}
-                <FeatureRow label={t("admin.featAds")} on={s.adsEnabled} onToggle={(v) => toggleFeature("adsEnabled", v)} />
-                <PriceField label={t("admin.priceAdBase")} value={s.priceAdBase} onChange={(v) => set("priceAdBase", v)} />
-                <div className="grid grid-cols-2 gap-3">
-                  <PriceField label={t("admin.priceAdExtraCountry")} value={s.priceAdExtraCountry} onChange={(v) => set("priceAdExtraCountry", v)} />
-                  <PriceField label={t("admin.priceAdExtraDay")} value={s.priceAdExtraDay} onChange={(v) => set("priceAdExtraDay", v)} />
-                </div>
-
-                {/* Jobs */}
-                <FeatureRow label={t("admin.featJobs")} on={s.jobsEnabled} onToggle={(v) => toggleFeature("jobsEnabled", v)} />
-                <div className="grid grid-cols-2 gap-3">
-                  <PriceField label={t("admin.priceJobPost")} value={s.priceJobPost} onChange={(v) => set("priceJobPost", v)} />
-                  <PriceField label={t("admin.priceSeekerAd")} value={s.priceSeekerAd} onChange={(v) => set("priceSeekerAd", v)} />
-                </div>
-
-                <p className="text-[11px] font-medium leading-snug text-muted">{t("admin.pricingHint")}</p>
               </Card>
 
               <Card icon={<Info className="h-4 w-4 text-brand-600" />} title={t("admin.aboutSection")}>
@@ -2063,6 +2312,24 @@ function PriceField({ label, value, onChange }: { label: string; value: number; 
           onChange={(e) => onChange(Math.max(0, parseFloat(e.target.value) || 0))}
           className="h-11 w-full bg-transparent text-[14px] font-medium text-ink outline-none"
         />
+      </div>
+    </label>
+  );
+}
+
+/** A whole-number count (per month). 0 = unlimited. */
+function CountField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11.5px] font-bold text-muted">{label}</span>
+      <div className="flex items-center gap-2 rounded-2xl border-2 border-slate-200 bg-white px-3.5 focus-within:border-brand-500" dir="ltr">
+        <input
+          type="number" min={0} step={1} inputMode="numeric"
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) => onChange(Math.max(0, Math.round(parseFloat(e.target.value) || 0)))}
+          className="h-11 w-full bg-transparent text-[14px] font-medium text-ink outline-none"
+        />
+        <span className="whitespace-nowrap text-[12px] font-extrabold text-muted">/ mo</span>
       </div>
     </label>
   );

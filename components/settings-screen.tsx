@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { User, Store, Mail, MapPin, Eye, EyeOff, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check, Lock } from "lucide-react";
+import { User, Store, Mail, MapPin, Eye, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check, Lock, Trash2, Bluetooth } from "lucide-react";
 import { useI18n, type Locale } from "@/lib/i18n";
-import { apiGet, apiPatch, apiPost, apiDelete, logout, getAccessToken } from "@/lib/api";
+import { apiGet, apiPatch, apiDelete, logout, getAccessToken } from "@/lib/api";
 import { useRequireAuth } from "@/lib/use-auth";
 import { Section, EditRow, Segmented, Toggle, SocialInput } from "@/components/profile-ui";
 import { NAME_COLORS, OWNER_RED } from "@/lib/vip";
@@ -24,6 +24,7 @@ type Me = {
   address: string | null;
   visibility: string;
   showDistance: boolean;
+  bleDiscoverable?: boolean;
   allowSaveMedia: boolean;
   dmClosed: boolean;
   hideTop: boolean;
@@ -41,6 +42,9 @@ type Me = {
   social3: string | null;
 };
 
+type Cap = { unlimited: boolean; cap: number; used: number; remaining: number };
+type UsageData = { isPremium: boolean; tier: string; messages: Cap; images: Cap; videos: Cap; voiceMin: Cap; storageGb: Cap };
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { t, dir, locale, setLocale } = useI18n();
@@ -52,11 +56,14 @@ export default function SettingsScreen() {
   const [busySub, setBusySub] = useState(false);
   // live package prices from the dashboard
   const [tiers, setTiers] = useState<Record<number, number>>({ 1: 4.99, 3: 13.99, 6: 26.99, 12: 53.99 });
+  const [vaultOn, setVaultOn] = useState(true);
+  const [usage, setUsage] = useState<UsageData | null>(null);
 
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
         const s = d?.settings ?? {};
+        setVaultOn(s.vaultEnabled !== false);
         setTiers((prev) => ({
           1: typeof s.priceSubscription === "number" ? s.priceSubscription : prev[1],
           3: typeof s.priceSub3m === "number" ? s.priceSub3m : prev[3],
@@ -66,17 +73,6 @@ export default function SettingsScreen() {
       })
       .catch(() => {});
   }, []);
-
-  /** Buy a package from settings — it stacks on whatever time is left. */
-  async function buyMonths(months: 1 | 3 | 6 | 12) {
-    if (busySub) return;
-    if (!confirm(t("settings.extendConfirm").replace("{price}", `$${tiers[months]}`))) return;
-    setBusySub(true);
-    const res = await apiPost<{ user: Me }>("/api/subscribe", { months }, getAccessToken() || undefined);
-    setBusySub(false);
-    if (res.ok && res.data?.user) { setMe(res.data.user); flash(t("settings.extended")); }
-    else flash(t("common.error"));
-  }
 
   /** Cancel = stop auto-renewal; whatever's paid for keeps running to its end date. */
   async function cancelSub() {
@@ -105,6 +101,9 @@ export default function SettingsScreen() {
     if (!token) return;
     apiGet<{ user: Me }>("/api/auth/me", token).then((res) => {
       if (res.ok && res.data?.user) setMe(res.data.user);
+    });
+    apiGet<UsageData>("/api/ai/usage", token).then((res) => {
+      if (res.ok && res.data) setUsage(res.data);
     });
   }, [ready]);
 
@@ -192,10 +191,9 @@ export default function SettingsScreen() {
           )}
           {/* precise-location control lives on the profile + home page, not here (per client) */}
           <Toggle icon={<Ruler className="h-4 w-4" />} label={t("register.distance")} hint={t("register.distanceHint")} value={!!me?.showDistance} onChange={(v) => patch({ showDistance: v })} />
+          <Toggle icon={<Bluetooth className="h-4 w-4" />} label={t("ble.discoverable")} hint={t("ble.discoverableHint")} value={!!me?.bleDiscoverable} onChange={(v) => patch({ bleDiscoverable: v })} />
           <Toggle icon={<ImageDown className="h-4 w-4" />} label={t("register.media")} hint={t("register.mediaHint")} value={!!me?.allowSaveMedia} onChange={(v) => patch({ allowSaveMedia: v })} />
-          <Toggle icon={<MessageCircle className="h-4 w-4" />} label={t("dm.closed")} hint={t("dm.closedHint")} value={!!me?.dmClosed} onChange={(v) => patch({ dmClosed: v })} />
-          {/* parental lock: the "most viewed" doorway disappears from the home page */}
-          <Toggle icon={<EyeOff className="h-4 w-4" />} label={t("settings.hideTop")} hint={t("settings.hideTopHint")} value={!!me?.hideTop} onChange={(v) => patch({ hideTop: v })} last={!isBusiness} />
+          <Toggle icon={<MessageCircle className="h-4 w-4" />} label={t("dm.closed")} hint={t("dm.closedHint")} value={!!me?.dmClosed} onChange={(v) => patch({ dmClosed: v })} last={!isBusiness} />
           {isBusiness && (
             <Toggle icon={<MapPin className="h-4 w-4" />} label={t("register.showAddress")} hint={t("register.showAddressHint")} value={!!me?.showAddress} onChange={(v) => patch({ showAddress: v })} last />
           )}
@@ -217,18 +215,11 @@ export default function SettingsScreen() {
                   )}
                 </div>
               </div>
-              <div className="border-b border-slate-100 py-3">
-                <p className="mb-2 text-[11.5px] font-medium leading-snug text-muted">{t("settings.extendHint")}</p>
-                <div className="grid grid-cols-4 gap-2">
-                  {([1, 3, 6, 12] as const).map((m) => (
-                    <button key={m} onClick={() => buyMonths(m)} disabled={busySub}
-                      className="flex flex-col items-center rounded-2xl border-2 border-slate-200 bg-white px-1 py-2.5 hover:border-brand-400 disabled:opacity-40">
-                      <span className="text-[12px] font-extrabold text-ink">{t(`premium.m${m}`)}</span>
-                      <span dir="ltr" className="mt-0.5 text-[12.5px] font-extrabold text-brand-700">${tiers[m]}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <button onClick={() => router.push("/subscribe")} className="flex w-full items-center gap-3 border-b border-slate-100 py-3 text-start">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600"><Crown className="h-4 w-4" /></span>
+                <span className="flex-1 text-[13px] font-bold text-ink">{t("settings.managePlan")}</span>
+                <span className="text-muted">{dir === "rtl" ? "‹" : "›"}</span>
+              </button>
               {me?.autoRenew ? (
                 <button onClick={cancelSub} disabled={busySub}
                   className="flex w-full items-center justify-center gap-2 py-3 text-[13px] font-bold text-red-600 disabled:opacity-40">
@@ -253,6 +244,40 @@ export default function SettingsScreen() {
         {/* premium extras — the same controls the profile pencil reveals */}
         {me?.isPremium ? (
           <Section title={t("profile.premium")}>
+            {usage && (
+              <div className="border-b border-slate-100 py-3">
+                <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Crown className="h-4 w-4 text-amber-500" /> {t("settings.usageTitle")}</p>
+                <div className="flex flex-col gap-1.5">
+                  {([
+                    { label: t("ask.uMessages"), c: usage.messages },
+                    { label: t("ask.uImages"), c: usage.images },
+                    { label: t("ask.uVideos"), c: usage.videos },
+                    { label: t("ask.uVoice"), c: usage.voiceMin, unit: t("ask.uMin") },
+                    { label: t("settings.usageStorage"), c: usage.storageGb, unit: "GB" },
+                  ] as { label: string; c: Cap; unit?: string }[]).map((r, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-[12.5px]">
+                      <span className="font-bold text-muted">{r.label}</span>
+                      <span className="font-extrabold text-ink">
+                        {r.c.unlimited ? t("settings.usageUnlimited") : `${r.c.used}${r.unit ? ` ${r.unit}` : ""} / ${r.c.cap}${r.unit ? ` ${r.unit}` : ""}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => router.push("/subscribe")} className="mt-2.5 text-[12px] font-bold text-brand-600">{t("settings.usageManage")}</button>
+              </div>
+            )}
+            {/* what your plan gives you — the AI features, colours, and the rest */}
+            <div className="border-b border-slate-100 py-3">
+              <p className="mb-2 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Crown className="h-4 w-4 text-amber-500" /> {t("settings.includedTitle")}</p>
+              <div className="flex flex-col gap-1.5">
+                {["premium.gReview", "premium.gFeelings", "premium.gAdHelp", "premium.gCharacter", "premium.gColor", "premium.gLocation", "premium.gSocials", "premium.gVault"].map((k) => (
+                  <div key={k} className="flex items-start gap-2 text-[12.5px]">
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" strokeWidth={3} />
+                    <span className="font-medium text-muted">{t(k)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="border-b border-slate-100 py-3">
               <p className="mb-1 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Palette className="h-4 w-4 text-brand-600" /> {t("profile.textColor")}</p>
               <p className="mb-2.5 text-[11.5px] font-medium leading-snug text-muted">{t("profile.colorHint")}</p>
@@ -265,7 +290,7 @@ export default function SettingsScreen() {
                 ))}
               </div>
             </div>
-            <div className="py-3">
+            <div className="border-b border-slate-100 py-3">
               <p className="mb-1 flex items-center gap-1.5 text-[12.5px] font-bold text-ink"><Link2 className="h-4 w-4 text-brand-600" /> {t("profile.socials")}</p>
               <p className="mb-2.5 text-[11.5px] text-muted">{t("profile.socialsHint")}</p>
               <div className="flex flex-col gap-2">
@@ -274,6 +299,16 @@ export default function SettingsScreen() {
                 <SocialInput value={me?.social3 || ""} onSave={(v) => patch({ social3: v || null })} />
               </div>
             </div>
+            {vaultOn && (
+              <button onClick={() => router.push("/vault")} className="flex w-full items-center gap-3 py-3 text-start">
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-50 text-brand-600"><Lock className="h-4 w-4" /></span>
+                <span className="flex-1">
+                  <span className="block text-[13px] font-bold text-ink">{t("vault.title")}</span>
+                  <span className="block text-[11.5px] font-medium text-muted">{t("vault.subtitle")}</span>
+                </span>
+                <span className="text-muted">{dir === "rtl" ? "‹" : "›"}</span>
+              </button>
+            )}
           </Section>
         ) : null /* non-premium users get the upgrade row in the Subscription section above */}
 
@@ -281,6 +316,21 @@ export default function SettingsScreen() {
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-red-200 bg-red-50 py-3.5 text-[15px] font-bold text-red-600 active:scale-[0.99]">
           <LogOut className="h-5 w-5" /> {t("profile.logout")}
         </button>
+
+        {/* Permanent account deletion — required by Google Play / App Store. Double-confirmed. */}
+        <button
+          onClick={async () => {
+            if (!confirm(t("account.deleteConfirm1"))) return;
+            if (!confirm(t("account.deleteConfirm2"))) return;
+            const res = await apiDelete("/api/account", getAccessToken() || undefined);
+            if (res.ok) { await logout(); router.replace("/"); }
+            else { setToast(t("common.error")); setTimeout(() => setToast(null), 2000); }
+          }}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[13.5px] font-bold text-red-500 active:scale-[0.99]">
+          <Trash2 className="h-4 w-4" /> {t("account.delete")}
+        </button>
+        <p className="mt-1 text-center text-[11.5px] leading-snug text-muted">{t("account.deleteHint")}</p>
+
         <p className="mt-4 text-center text-[12px] text-muted">{t("profile.member")}</p>
       </div>
 

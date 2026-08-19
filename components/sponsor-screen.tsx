@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, ArrowLeft, Crown, Link2, Lock } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import MerchantScreen from "@/components/merchant-screen";
 
 type Sponsor = { sponsorName?: string; sponsorLogo?: string; sponsorText?: string; sponsorUrl?: string; sponsorUserId?: string };
 
@@ -26,6 +27,12 @@ export default function SponsorScreen() {
   }, []);
 
   const hasSponsor = !!(s?.sponsorName || s?.sponsorLogo || s?.sponsorText || s?.sponsorUserId);
+
+  // When the admin has linked a real in-app account as the sponsor, the page IS that
+  // account — the full profile with every perk the admin gave it — marked as the sponsor.
+  if (loaded && s?.sponsorUserId) {
+    return <MerchantScreen id={s.sponsorUserId} sponsor />;
+  }
 
   return (
     <div dir={dir} className="flex min-h-[100dvh] flex-col bg-white px-6 pb-8 pt-[calc(env(safe-area-inset-top)+16px)]">

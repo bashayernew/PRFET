@@ -18,6 +18,7 @@ const schema = z.object({
   // gift premium: either a bundle of months OR an exact end date; revoke turns it off
   premiumMonths: z.number().int().min(1).max(120).optional(),
   premiumUntil: z.string().optional(), // ISO date, e.g. "2027-01-01"
+  premiumTier: z.enum(["basic", "vip"]).optional(), // which plan to gift (Golden = basic)
   revokePremium: z.boolean().optional(),
   // free-posting rights
   freeAdsLeft: z.number().int().min(0).max(9999).optional(),
@@ -69,6 +70,7 @@ export async function POST(req: Request) {
   if (d.revokePremium) {
     data.isPremium = false;
     data.premiumUntil = null;
+    data.premiumTier = "basic";
   } else if (d.premiumMonths || d.premiumUntil) {
     let until: Date;
     if (d.premiumUntil) {
@@ -83,6 +85,7 @@ export async function POST(req: Request) {
     }
     data.isPremium = true;
     data.premiumUntil = until;
+    data.premiumTier = d.premiumTier === "vip" ? "vip" : "basic"; // Golden = basic
     // the $0 receipt — visible in the archive, never inflates revenue
     await prisma.subscription.create({
       data: { userId: d.userId, gifterId: admin.id, plan: "premium", amount: 0, currency: "USD", expiresAt: until },

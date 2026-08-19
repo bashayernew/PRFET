@@ -1,29 +1,141 @@
 @import "tailwindcss";
 
-/* ---- Herot design tokens ---- */
+/* ---- PRFET design tokens — neon violet on deep space purple ----
+ *
+ * COLOURS ONLY. Every layout, size, radius and component stays exactly as it was:
+ * the whole theme is re-skinned by redefining the tokens the existing utility classes
+ * already point at, so no component markup had to change.
+ *
+ * The slate ramp is INVERTED on purpose: the app uses slate-50/100 for pale surfaces
+ * and slate-500/900 for dark text, so flipping the scale turns every one of those into
+ * its dark-mode counterpart in one move.
+ */
 @theme {
-  /* Herot brand — deep navy / indigo (Nexa-style) */
-  --color-brand-50: #eef0fb;
-  --color-brand-100: #d9ddf7;
-  --color-brand-200: #b6bdf0;
-  --color-brand-300: #8c95e6;
-  --color-brand-400: #5e66d6;
-  --color-brand-500: #3a41c6;
-  --color-brand-600: #282e9e;
-  --color-brand-700: #1e2480;
-  --color-brand-800: #161a5f;
-  --color-brand-900: #0d1142;
+  /* brand — violet → magenta neon.
+     50/100 are chip BACKGROUNDS here (119 uses) so they are dark tints; the handful of
+     places that use them as TEXT are pinned back to light further down. */
+  --color-brand-50: #1e1440;
+  --color-brand-100: #2a1a5c;
+  --color-brand-200: #3b2483;
+  --color-brand-300: #5b34c4;
+  --color-brand-400: #7c4dff;
+  --color-brand-500: #9333ea;
+  --color-brand-600: #8b3dff; /* primary buttons */
+  --color-brand-700: #5b21b6; /* header gradients */
+  --color-brand-800: #33116e;
+  --color-brand-900: #1a0a3d;
 
-  /* accent — periwinkle violet */
-  --color-accent-400: #8b90f2;
-  --color-accent-500: #6c72e0;
-  --color-accent-600: #565cd0;
+  /* accent — magenta */
+  --color-accent-400: #e879f9;
+  --color-accent-500: #d946ef;
+  --color-accent-600: #c026d3;
 
-  --color-ink: #141a3a;
-  --color-muted: #6b7194;
+  --color-ink: #f3efff;   /* primary text */
+  --color-muted: #a294cc; /* secondary text */
   --color-gold-400: #fbbf24;
-  --color-pos: #1faa6e;
+  --color-pos: #34d399;
+
+  /* inverted neutrals: pale surfaces become deep purple, dark text becomes light */
+  --color-slate-50: #150f2e;
+  --color-slate-100: #1d1540;
+  --color-slate-200: #2c2058;
+  --color-slate-300: #3d2d75;
+  --color-slate-400: #7e6fae;
+  --color-slate-500: #9c8ec8;
+  --color-slate-600: #b6a9dc;
+  --color-slate-700: #cec4ea;
+  --color-slate-800: #e4dcf6;
+  --color-slate-900: #f5f1ff;
 }
+
+/* ---- surface + text fixes the token swap alone can't express ---- */
+
+/* Cards use `bg-white`; headers use `bg-white/15` for glass. Only the SOLID one becomes
+   a dark surface — the translucent variants must stay white or the glass disappears. */
+.bg-white {
+  background-color: #1b1440;
+}
+
+/* Inputs across the app use `focus:bg-white` to brighten while typing. That is a DIFFERENT
+   class from `bg-white`, so the rule above never reached it: focused fields turned fully
+   white while the text stayed near-white — you couldn't read what you were typing until
+   you tapped Done. These get a slightly lifted surface instead, so focus is still clear. */
+.focus\:bg-white:focus,
+.focus-within\:bg-white:focus-within,
+.hover\:bg-white:hover,
+.active\:bg-white:active {
+  background-color: #241b57;
+}
+
+/**
+ * Safety net for EVERY field in the app.
+ *
+ * Typed text must always be readable, whatever utility classes a component happens to
+ * use. These are element selectors, so any explicit `text-*` class still wins — this only
+ * catches fields that would otherwise inherit a colour that vanishes on a dark surface.
+ */
+input,
+textarea,
+select {
+  color: #f3efff;
+  caret-color: #a78bfa;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #8d7fb8;
+  opacity: 1; /* Firefox dims placeholders by default */
+}
+/* Dropdown lists are drawn by the OS and default to a white sheet. */
+select option {
+  background-color: #1b1440;
+  color: #f3efff;
+}
+
+/* Browser autofill paints its own light background with dark text. Keep it on-theme. */
+input:-webkit-autofill,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: #f3efff;
+  -webkit-box-shadow: 0 0 0 1000px #241b57 inset;
+  caret-color: #f3efff;
+}
+
+/* These two are chip backgrounds almost everywhere, but a few headers use them as text
+   on a dark gradient — keep those legible. */
+.text-brand-50 { color: #e9ddff; }
+.text-brand-100 { color: #cbb4ff; }
+
+/* Neon edge on cards instead of a flat grey hairline. */
+.ring-slate-100 { --tw-ring-color: #2a1f52; }
+.ring-slate-200 { --tw-ring-color: #35276a; }
+.border-slate-100 { border-color: #2a1f52; }
+.border-slate-200 { border-color: #35276a; }
+
+/* Status chips (success / warning / danger / info) are pale washes designed for a white
+   card. On a dark surface they read as glaring white blocks, so each becomes a deep
+   tint of its own hue — the meaning of the colour is kept, the brightness is not.
+   The matching `text-*-600/700` labels stay as they are and sit well on these. */
+.bg-emerald-50 { background-color: #0d2e26; }
+.bg-emerald-100 { background-color: #123f33; }
+.bg-amber-50 { background-color: #33240a; }
+.bg-amber-100 { background-color: #45300d; }
+.bg-orange-50 { background-color: #35200c; }
+.bg-orange-100 { background-color: #472b10; }
+.bg-red-50 { background-color: #3a1220; }
+.bg-red-100 { background-color: #4d182b; }
+.bg-rose-50 { background-color: #3a1228; }
+.bg-rose-100 { background-color: #4d1836; }
+.bg-violet-50 { background-color: #251356; }
+.bg-sky-50 { background-color: #0d2740; }
+.bg-sky-100 { background-color: #123553; }
+
+/* Those chips carry -600/-700 text, which is too dark against the new tints. */
+.text-emerald-600, .text-emerald-700 { color: #4ade9f; }
+.text-amber-600, .text-amber-700 { color: #fcd34d; }
+.text-orange-600, .text-orange-700 { color: #fdba74; }
+.text-red-600, .text-red-700 { color: #ff8095; }
+.text-violet-600, .text-violet-700 { color: #c4a6ff; }
+.text-sky-600, .text-sky-700 { color: #7dd3fc; }
 
 /* subtle dotted texture for the hero */
 .hero-dots {
@@ -39,7 +151,13 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: #0d1142;
+  /* deep space purple, with a faint violet/magenta glow top and bottom */
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(139, 61, 255, 0.18) 0%, rgba(139, 61, 255, 0) 60%),
+    radial-gradient(100% 60% at 50% 100%, rgba(217, 70, 239, 0.12) 0%, rgba(217, 70, 239, 0) 60%),
+    #0b0718;
+  background-attachment: fixed;
+  color-scheme: dark;
 }
 
 /* hide scrollbar on the mobile shell while keeping scroll */
@@ -49,6 +167,34 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* ===== Live-talk avatar =====
+ * A still photo can't really lip-sync — that needs a talking-head video model. What we
+ * can do is make the figure feel alive: a slow breathing drift when idle, and a faster,
+ * slightly bobbing "speaking" motion while the voice is playing. The subtle scale change
+ * around the face reads as movement without ever distorting the person.
+ */
+@keyframes avatar-breathe {
+  0%, 100% { transform: scale(1.02) translateY(0); }
+  50%      { transform: scale(1.035) translateY(-0.4%); }
+}
+@keyframes avatar-talk {
+  0%, 100% { transform: scale(1.045) translateY(0); }
+  25%      { transform: scale(1.06) translateY(-0.7%); }
+  50%      { transform: scale(1.04) translateY(0.2%); }
+  75%      { transform: scale(1.065) translateY(-0.5%); }
+}
+.avatar-idle {
+  animation: avatar-breathe 5s ease-in-out infinite;
+  transform-origin: 50% 35%; /* pivot around the head, not the middle of the frame */
+}
+.avatar-talking {
+  animation: avatar-talk 0.62s ease-in-out infinite;
+  transform-origin: 50% 35%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-idle, .avatar-talking { animation: none; }
 }
 
 @keyframes floaty {

@@ -6,7 +6,12 @@ function getRefresh() {
 
 let refreshing: Promise<string | null> | null = null;
 
-/** Exchange the refresh token for a fresh access token (deduped across concurrent calls). */
+/**
+ * Exchange the refresh token for a fresh access token (deduped across concurrent calls).
+ * Exported as `refreshAccessToken` below so the socket layer can re-authenticate too —
+ * access tokens live 15 minutes, and a socket that reconnects with a stale one is
+ * rejected, which silently kills calls and live chat.
+ */
 async function refreshAccess(): Promise<string | null> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
@@ -38,6 +43,9 @@ async function refreshAccess(): Promise<string | null> {
   refreshing = null;
   return r;
 }
+
+/** Public alias so non-fetch callers (the Socket.IO layer) can refresh the token too. */
+export const refreshAccessToken = refreshAccess;
 
 const NO_REFRESH = ["/api/auth/refresh", "/api/auth/login", "/api/auth/register", "/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/forgot", "/api/auth/reset"];
 

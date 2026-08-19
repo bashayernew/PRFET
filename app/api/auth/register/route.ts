@@ -8,6 +8,17 @@ import { isCountryClosed } from "@/lib/closed";
 
 const phoneRe = /^\+?[0-9]{7,15}$/;
 
+/** Whole years between a birth date (ISO string) and today. null if unparseable. */
+function ageOf(dob: string): number | null {
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+  return age;
+}
+
 const schema = z
   .object({
     accountType: z.enum(["personal", "business"]).default("personal"),
@@ -37,6 +48,16 @@ const schema = z
     }
     if (d.contactMethod === "phone" && !(d.phone && phoneRe.test(normalizePhone(d.phone)))) {
       ctx.addIssue({ code: "custom", path: ["phone"], message: "phone_required" });
+    }
+    // PRFET is an 18+ app: a personal account must give a birth date and be at least 18.
+    if (d.accountType === "personal") {
+      if (!d.dateOfBirth) {
+        ctx.addIssue({ code: "custom", path: ["dateOfBirth"], message: "dob_required" });
+      } else {
+        const age = ageOf(d.dateOfBirth);
+        if (age === null) ctx.addIssue({ code: "custom", path: ["dateOfBirth"], message: "dob_invalid" });
+        else if (age < 18) ctx.addIssue({ code: "custom", path: ["dateOfBirth"], message: "under_18" });
+      }
     }
   });
 

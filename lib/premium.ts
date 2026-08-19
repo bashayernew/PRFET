@@ -16,7 +16,7 @@ export function premiumLapsed(u: { isPremium: boolean; premiumUntil: Date | null
 export async function expireIfLapsed<T extends { id: string; isPremium: boolean; premiumUntil: Date | null; autoRenew: boolean; isAdmin?: boolean }>(u: T): Promise<T> {
   if (!premiumLapsed(u)) return u;
   const updated = await prisma.user
-    .update({ where: { id: u.id }, data: { isPremium: false, premiumUntil: null, textColor: null, shareLocation: false } })
+    .update({ where: { id: u.id }, data: { isPremium: false, premiumTier: "basic", premiumUntil: null, textColor: null, shareLocation: false } })
     .catch(() => null);
   return (updated as unknown as T) ?? { ...u, isPremium: false, premiumUntil: null };
 }

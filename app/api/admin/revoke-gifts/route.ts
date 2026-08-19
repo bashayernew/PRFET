@@ -19,8 +19,8 @@ const schema = z.object({
   userId: z.string().max(40).optional(),
 });
 
-// POST /api/admin/revoke-gifts — pull back admin-gifted perks (free premium + free posting)
-// for everyone, a country, or one person. Paid subscribers are never touched.
+// POST /api/admin/revoke-gifts — cancel ALL subscriptions (paid AND gifted) plus admin
+// free-posting perks, for everyone, a country, or one person. Admins/owner are spared.
 export async function POST(req: Request) {
   const admin = await requireOwner(req);
   if (!admin) return NextResponse.json({ error: "forbidden" }, { status: 403 });
@@ -39,35 +39,31 @@ export async function POST(req: Request) {
   if (scope === "country") scopeWhere.country = country;
   if (scope === "user") scopeWhere.id = userId;
 
-  // 1) free-posting rights are always admin gifts — zero them out in scope.
+  // 1) free-posting rights (admin gifts) — zero them out in scope.
   const freed = await prisma.user.updateMany({
     where: { ...scopeWhere, OR: [{ freeAdsLeft: { gt: 0 } }, { freeJobPostLeft: { gt: 0 } }, { freeSeekerLeft: { gt: 0 } }] },
     data: { freeAdsLeft: 0, freeJobPostLeft: 0, freeSeekerLeft: 0 },
   });
 
-  // 2) gifted premium: users with an active $0 gift subscription and NO active paid one.
-  const [giftSubs, paidSubs] = await Promise.all([
-    prisma.subscription.findMany({ where: { gifterId: { not: null }, expiresAt: { gt: now } }, select: { userId: true } }),
-    prisma.subscription.findMany({ where: { gifterId: null, amount: { gt: 0 }, expiresAt: { gt: now } }, select: { userId: true } }),
-  ]);
-  const paidSet = new Set(paidSubs.map((s) => s.userId));
-  const giftedIds = [...new Set(giftSubs.map((s) => s.userId))].filter((id) => !paidSet.has(id));
-
+  // 2) EVERY active subscription in scope — paid or gifted alike — is cancelled.
+  const premTargets = await prisma.user.findMany({
+    where: { ...scopeWhere, OR: [{ isPremium: true }, { premiumUntil: { gt: now } }] },
+    select: { id: true },
+  });
+  const premIds = premTargets.map((u) => u.id);
   let revokedPremium = 0;
-  if (giftedIds.length) {
-    const targets = await prisma.user.findMany({
-      where: { id: { in: giftedIds }, ...scopeWhere },
-      select: { id: true },
+  if (premIds.length) {
+    const res = await prisma.user.updateMany({
+      where: { id: { in: premIds } },
+      data: { isPremium: false, premiumUntil: null, premiumTier: "basic", textColor: null, shareLocation: false, autoRenew: false },
     });
-    const ids = targets.map((u) => u.id);
-    if (ids.length) {
-      const res = await prisma.user.updateMany({
-        where: { id: { in: ids } },
-        data: { isPremium: false, premiumUntil: null, textColor: null, shareLocation: false },
-      });
-      revokedPremium = res.count;
-      ids.forEach((id) => notify(id, "sub_ended", {}).catch(() => {}));
-    }
+    revokedPremium = res.count;
+    // Also close any still-open subscription records for these users, so nothing lingers.
+    await prisma.subscription.updateMany({
+      where: { userId: { in: premIds }, expiresAt: { gt: now } },
+      data: { expiresAt: now },
+    }).catch(() => {});
+    premIds.forEach((id) => notify(id, "sub_ended", {}).catch(() => {}));
   }
 
   return NextResponse.json({ ok: true, revokedPremium, revokedFreePosting: freed.count });

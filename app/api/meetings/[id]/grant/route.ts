@@ -12,7 +12,8 @@ const schema = z.object({
   mode: z.enum(["solo", "split"]).optional(),
 });
 
-const MAX_STAGE = 2;
+const MAX_STAGE = 4;   // up to 4 video/screen tiles on the stage
+const MAX_SPEAKERS = 4; // at most 4 people (besides the host) may have mic/camera/screen
 
 // POST /api/meetings/[id]/grant — the host approves or denies a participant's request.
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -30,6 +31,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const meeting = await prisma.meeting.findUnique({ where: { id } });
   if (!meeting) return NextResponse.json({ error: "not_found" }, { status: 404 });
   if (meeting.hostId !== payload.sub) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+
+  // Cap the number of people the host can put on air. Granting mic/camera/screen to a NEW
+  // person is blocked once 4 others already have any of them.
+  if (allow && (kind === "audio" || kind === "video" || kind === "screen")) {
+    const speakers = await prisma.meetingParticipant.count({
+      where: {
+        meetingId: id, kicked: false, role: { not: "host" }, userId: { not: userId },
+        OR: [{ canAudio: true }, { canVideo: true }, { canScreen: true }],
+      },
+    });
+    if (speakers >= MAX_SPEAKERS) return NextResponse.json({ error: "stage_full" }, { status: 409 });
+  }
 
   const data: Record<string, unknown> = { wants: null };
   if (kind === "audio") {

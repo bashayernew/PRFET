@@ -32,7 +32,6 @@ export default function ContactScreen() {
 
   const [s, setS] = useState<Settings | null>(null);
   const [kind, setKind] = useState<Kind>("suggestion");
-  const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,17 +52,29 @@ export default function ContactScreen() {
 
   function flash(m: string) { setToast(m); setTimeout(() => setToast(null), 2400); }
 
+  /**
+   * The subject is no longer typed by the person — it always mirrors the category they
+   * picked above, so every ticket reaching the admin inbox has a consistent, readable
+   * subject line instead of whatever (or nothing) the sender chose to write.
+   */
+  const subjectFor = (k: Kind) =>
+    k === "complaint" ? t("contact.complaint")
+    : k === "suggestion" ? t("contact.suggestion")
+    : k === "call" ? t("contact.callRequest")
+    : t("contact.legal");
+  const subject = subjectFor(kind);
+
   async function send() {
     if (body.trim().length < 5 || busy) return;
     setBusy(true);
     const res = await apiPost("/api/support", {
       kind,
-      subject: subject.trim() || undefined,
+      subject,
       body: body.trim(),
       contact: contact.trim() || undefined,
     }, getAccessToken() || undefined);
     setBusy(false);
-    if (res.ok) { flash(t("contact.sent")); setSubject(""); setBody(""); setContact(""); }
+    if (res.ok) { flash(t("contact.sent")); setBody(""); setContact(""); }
     else flash(t("common.error"));
   }
 
@@ -204,12 +215,13 @@ export default function ContactScreen() {
 
           {kindInfo && <p className="mb-3 rounded-2xl bg-brand-50 p-3 text-[12px] font-medium leading-snug text-brand-800">{kindInfo}</p>}
 
-          <input
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            placeholder={t("contact.subjectPh")}
-            className="mb-2.5 h-11 w-full rounded-2xl border-2 border-slate-200 bg-white px-3.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500"
-          />
+          {/* Filled from the category above and locked — not editable by the sender. */}
+          <div
+            aria-label={t("contact.subjectPh")}
+            className="mb-2.5 flex h-11 w-full items-center rounded-2xl border-2 border-slate-200 bg-slate-50 px-3.5 text-[14px] font-bold text-ink"
+          >
+            {subject}
+          </div>
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
