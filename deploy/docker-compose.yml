@@ -41,6 +41,7 @@ services:
     network_mode: host
     command: >
       -n --realm=${DOMAIN} --server-name=${DOMAIN}
+      --external-ip=${TURN_EXTERNAL_IP:-63.187.183.253}
       --listening-port=3478 --min-port=49160 --max-port=49200
       --use-auth-secret --static-auth-secret=${TURN_SECRET}
       --no-cli --no-tls --no-dtls --log-file=stdout

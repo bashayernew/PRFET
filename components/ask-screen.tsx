@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, ArrowLeft, Send, Sparkles, Trash2, UserRound, ImagePlus, Mic, Volume2, Clapperboard, Download, Crown, Check, X, AudioLines, CreditCard, Paperclip } from "lucide-react";
 // Trash2 is reused for removing a saved character from the picker.
 import { useI18n } from "@/lib/i18n";
-import { apiGet, apiPost, apiDelete, getAccessToken } from "@/lib/api";
+import { apiGet, apiPost, apiDelete, apiUpload, getAccessToken } from "@/lib/api";
 import { useRequireAuth } from "@/lib/use-auth";
 
 /**
@@ -460,24 +460,17 @@ export default function AskScreen() {
     setAvatarBusy(true);
     setErr(null);
     try {
-      const dataUrl = await resizeToDataUrl(file);
-      const name = customName.trim() || persona?.name || t("ask.char.custom");
       const token = getAccessToken() || undefined;
-
-      /**
-       * Match the framing of what they uploaded. A full-body photo used to come back as a
-       * cropped headshot, which threw away exactly what they'd chosen to show. Portrait-ish
-       * aspect ratios (clearly taller than wide) are treated as full-body shots.
-       */
-      const full = await isFullBody(dataUrl);
-      const prompt = full
-        ? "Create a friendly, warm FULL-BODY character portrait that clearly resembles the person in this photo — head to feet, whole figure visible, natural standing pose, keep their outfit and build. Clean soft background, high quality."
-        : "Create a friendly, warm portrait avatar that clearly resembles the person in this photo. Clean soft background, centered face, high quality.";
-
-      const res = await apiPost<{ url?: string }>("/api/ai/image", { prompt, image: dataUrl }, token);
-      // Voice follows the gender chosen in the picker (male/female toggle above).
-      if (res.ok && res.data?.url) choosePersona({ name, gender: persona?.gender || customGender, avatar: res.data.url, fullBody: full });
-      else setErr(t("ask.imgFailed"));
+      // Fix #12: use the uploaded photo DIRECTLY as the character avatar (free + reliable),
+      // instead of AI-generating a lookalike — which failed whenever the image model was
+      // rate-limited/out of credit and made it look like the avatar "couldn't be uploaded".
+      const up = await apiUpload<{ url?: string; error?: string }>("/api/upload", file, token);
+      if (up.ok && up.data?.url) {
+        const name = customName.trim() || persona?.name || t("ask.char.custom");
+        choosePersona({ name, gender: persona?.gender || customGender, avatar: up.data.url });
+      } else {
+        setErr(t("ask.imgFailed"));
+      }
     } catch { setErr(t("ask.imgFailed")); }
     setAvatarBusy(false);
   }
