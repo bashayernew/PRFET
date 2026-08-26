@@ -11,6 +11,9 @@ import { ttsKey, ttsGet, ttsSet } from "@/lib/ai-cache";
 const schema = z.object({
   text: z.string().min(1).max(1200),
   gender: z.enum(["male", "female"]).optional(),
+  // In live voice mode the client meters TIME via /api/ai/voice-tick, so it asks TTS not to
+  // also charge the audio length (would double-count). Defaults to metering for one-off playback.
+  meter: z.boolean().default(true),
 });
 
 // POST /api/ai/tts — speak a reply in a natural voice (Gemini text-to-speech).
@@ -51,10 +54,11 @@ export async function POST(req: Request) {
   // Token saver: identical text in the same voice returns the audio we already generated,
   // instead of paying to synthesize it again. Shared across members (audio has no personal
   // content). The spoken time still counts against the member's monthly voice cap.
+  const meter = parsed.data.meter;
   const tkey = ttsKey(parsed.data.gender, text);
   const hit = ttsGet(tkey);
   if (hit) {
-    await voiceBump(payload.sub, hit.seconds);
+    if (meter) await voiceBump(payload.sub, hit.seconds);
     return NextResponse.json({ url: hit.url });
   }
 
@@ -64,6 +68,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: r.error }, { status });
   }
   ttsSet(tkey, r.dataUrl, r.seconds); // remember it for the next identical request
-  await voiceBump(payload.sub, r.seconds); // count the spoken time against the monthly cap
+  if (meter) await voiceBump(payload.sub, r.seconds); // count the spoken time against the monthly cap
   return NextResponse.json({ url: r.dataUrl });
 }

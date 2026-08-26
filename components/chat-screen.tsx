@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import ImageZoom from "@/components/image-zoom";
 import {
   ArrowRight,
   ArrowLeft,
@@ -65,7 +66,8 @@ export default function ChatScreen({ id }: { id: string }) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [giftOpen, setGiftOpen] = useState(false);
-  const [giftMonths, setGiftMonths] = useState(1);
+  const [giftTier, setGiftTier] = useState<"basic" | "vip">("basic"); // gift Golden or VIP (1 month)
+  const [giftPrices, setGiftPrices] = useState({ basic: 5.99, vip: 10.99 }); // live from the dashboard
   const [gifting, setGifting] = useState(false);
 
   // chat settings
@@ -101,6 +103,14 @@ export default function ChatScreen({ id }: { id: string }) {
     apiGet<{ user: { displayName: string; online: boolean; category: string | null; avatarUrl: string | null; isPremium?: boolean; textColor?: string | null; canMessage?: boolean } }>(`/api/users/${id}`, getAccessToken() || undefined).then((res) => {
       if (res.ok && res.data?.user) setPeer(res.data.user);
     });
+    // live Golden/VIP prices for the gift sheet (dashboard-driven)
+    fetch("/api/settings").then((r) => r.json()).then((d) => {
+      const s = d?.settings ?? {};
+      setGiftPrices({
+        basic: typeof s.priceSubscription === "number" ? s.priceSubscription : 5.99,
+        vip: typeof s.priceVip === "number" ? s.priceVip : 10.99,
+      });
+    }).catch(() => {});
     const token = getAccessToken();
     if (token) apiGet<{ blocked: boolean }>(`/api/block/${id}`, token).then((res) => {
       if (res.ok && res.data) setBlocked(res.data.blocked);
@@ -145,7 +155,7 @@ export default function ChatScreen({ id }: { id: string }) {
     setGifting(true);
     const res = await apiPost<{ ok: boolean; amount: number }>(
       "/api/subscribe/gift",
-      { peerId: id, months: giftMonths },
+      { peerId: id, tier: giftTier },
       getAccessToken() || undefined
     );
     setGifting(false);
@@ -541,20 +551,20 @@ export default function ChatScreen({ id }: { id: string }) {
         </p>
 
         <div className="mb-3 flex gap-2">
-          {[1, 3, 6, 12].map((m) => (
+          {(["basic", "vip"] as const).map((tv) => (
             <button
-              key={m}
-              onClick={() => setGiftMonths(m)}
-              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-bold transition-colors ${giftMonths === m ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
+              key={tv}
+              onClick={() => setGiftTier(tv)}
+              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-bold transition-colors ${giftTier === tv ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
             >
-              {ld(m, locale)} {m === 1 ? t("gift.month") : t("gift.months")}
+              {t(tv === "vip" ? "premium.vipName" : "premium.goldName")}
             </button>
           ))}
         </div>
 
         <div className="mb-4 flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3">
           <span className="text-[13px] font-bold text-amber-800">{t("gift.total")}</span>
-          <span dir="ltr" className="text-[17px] font-extrabold text-amber-900">${giftMonths * 30}</span>
+          <span dir="ltr" className="text-[17px] font-extrabold text-amber-900">${giftTier === "vip" ? giftPrices.vip : giftPrices.basic}</span>
         </div>
 
         <button
@@ -569,6 +579,25 @@ export default function ChatScreen({ id }: { id: string }) {
 
       {call && <CallOverlay peerId={id} peerName={name} incomingOffer={call.incomingOffer} onEnd={() => setCall(null)} />}
     </div>
+  );
+}
+
+// A chat image that opens the full-screen pinch-zoom lightbox on tap (fix #13).
+function ChatImage({ src, noSave }: { src: string; noSave: boolean }) {
+  const [zoom, setZoom] = useState(false);
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        onClick={() => setZoom(true)}
+        draggable={!noSave}
+        onContextMenu={noSave ? (e) => e.preventDefault() : undefined}
+        className="max-h-64 w-full cursor-zoom-in rounded-xl object-cover"
+      />
+      {zoom && <ImageZoom src={src} onClose={() => setZoom(false)} />}
+    </>
   );
 }
 
@@ -613,8 +642,7 @@ function MessageBody({ m, t, opened, onOpenOnce }: { m: Msg; t: (k: string) => s
   const noSave = !m.mine && m.allowSave === false;
 
   if (m.kind === "image" && m.mediaUrl) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={m.mediaUrl} alt="" draggable={!noSave} onContextMenu={noSave ? (e) => e.preventDefault() : undefined} className="max-h-64 w-full rounded-xl object-cover" />;
+    return <ChatImage src={m.mediaUrl} noSave={noSave} />;
   }
   if (m.kind === "video" && m.mediaUrl) {
     return <video src={m.mediaUrl} controls controlsList={noSave ? "nodownload" : undefined} className="max-h-64 w-full rounded-xl" />;

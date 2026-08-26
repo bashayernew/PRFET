@@ -66,6 +66,8 @@ const sendSchema = z.object({
   message: z.string().min(1).max(4000),
   persona: z.string().max(40).optional(),
   personaGender: z.enum(["male", "female"]).optional(),
+  // Optional attached image (base64 + mime) so the AI can SEE it — multimodal (fix #9).
+  image: z.object({ data: z.string().max(8_000_000), mime: z.string().max(60) }).optional(),
 });
 
 // POST /api/ai/chat — ask something, get the reply.
@@ -93,8 +95,9 @@ export async function POST(req: Request) {
   // Token saver: if this member already asked the exact same thing (same language/persona),
   // reuse the answer we generated last time instead of calling the model again. The cache is
   // keyed per user, so an answer is only ever returned to the person who asked it.
+  const img = parsed.data.image;
   const ckey = cacheKey(user.id, locale, parsed.data.persona, text);
-  let replyText = cacheGet(ckey);
+  let replyText = img ? null : cacheGet(ckey); // image-based answers are never cached
 
   if (replyText === null) {
     // Recent turns for context, oldest-first.
@@ -108,14 +111,14 @@ export async function POST(req: Request) {
       .map((r) => ({ role: r.role === "model" ? "model" : "user", text: r.body }));
     history.push({ role: "user", text });
 
-    const result = await geminiChat(history, locale, parsed.data.persona ? { name: parsed.data.persona, gender: parsed.data.personaGender } : undefined);
+    const result = await geminiChat(history, locale, parsed.data.persona ? { name: parsed.data.persona, gender: parsed.data.personaGender } : undefined, img);
     if (!result.ok) {
       // Nothing is stored on failure, so the member can simply try again.
       const status = result.error === "quota" ? 429 : result.error === "not_configured" ? 503 : 502;
       return NextResponse.json({ error: result.error }, { status });
     }
     replyText = result.text;
-    cacheSet(ckey, replyText); // remember it for the next identical question
+    if (!img) cacheSet(ckey, replyText); // remember only text-only answers
   }
 
   // Store the exchange (whether it came fresh from the model or from cache).

@@ -268,7 +268,7 @@ export type GeminiResult =
  * Send the conversation and get the next reply.
  * `history` should be oldest-first and already trimmed to a sane length.
  */
-export async function geminiChat(history: Turn[], locale: string, persona?: { name?: string; gender?: string }): Promise<GeminiResult> {
+export async function geminiChat(history: Turn[], locale: string, persona?: { name?: string; gender?: string }, image?: { data: string; mime: string }): Promise<GeminiResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, error: "not_configured" };
 
@@ -283,7 +283,14 @@ export async function geminiChat(history: Turn[], locale: string, persona?: { na
       signal: ctrl.signal,
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt(locale, persona) }] },
-        contents: history.map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
+        contents: history.map((h, idx) => {
+          const parts: Array<Record<string, unknown>> = [{ text: h.text }];
+          // Attach the uploaded image to the newest user turn so the AI can see it (fix #9).
+          if (image && h.role === "user" && idx === history.length - 1) {
+            parts.push({ inline_data: { mime_type: image.mime, data: image.data } });
+          }
+          return { role: h.role, parts };
+        }),
         generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
       }),
     });

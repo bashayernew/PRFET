@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight, ArrowLeft, ImagePlus, CircleDashed,
-  UploadCloud, Repeat2, Bookmark, MessageCircle, X,
+  UploadCloud, Repeat2, Bookmark, MessageCircle, X, Sparkles,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
@@ -149,8 +149,22 @@ function Composer({
   const [allowSave, setAllowSave] = useState(true);
   const [allowComment, setAllowComment] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
 
   const MAX_MB = kind === "video" ? 120 : 25;
+
+  // "Write with AI" (#17): turn a short idea (or the current caption) into a ready-to-post caption.
+  async function generateCaption() {
+    if (aiBusy) return;
+    const idea = caption.trim() || (typeof window !== "undefined" ? window.prompt(t("create.aiPrompt")) || "" : "");
+    if (!idea.trim()) return;
+    setAiBusy(true);
+    const token = getAccessToken() || undefined;
+    const res = await apiPost<{ text?: string; error?: string }>("/api/ai/generate", { kind: "post", prompt: idea }, token);
+    setAiBusy(false);
+    if (res.ok && res.data?.text) setCaption(res.data.text);
+    else onFail(t("create.aiFailed"));
+  }
 
   function pick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -230,8 +244,18 @@ function Composer({
       <input ref={fileRef} type="file" accept={kind === "video" ? "video/*" : "image/*"} hidden onChange={pick} />
 
       {/* caption */}
-      <label className="mt-4 block">
-        <span className="mb-1.5 block text-[12.5px] font-bold text-ink">{t("create.caption")}</span>
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-[12.5px] font-bold text-ink">{t("create.caption")}</span>
+          <button
+            type="button"
+            onClick={generateCaption}
+            disabled={aiBusy}
+            className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-[11.5px] font-bold text-brand-700 ring-1 ring-brand-200 active:scale-95 disabled:opacity-50"
+          >
+            <Sparkles className="h-3.5 w-3.5" /> {aiBusy ? t("create.aiWriting") : t("create.aiWrite")}
+          </button>
+        </div>
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
@@ -239,7 +263,7 @@ function Composer({
           placeholder={t("create.captionHint")}
           className="w-full resize-none rounded-2xl border-2 border-slate-200 bg-white p-3.5 text-[14px] font-medium text-ink outline-none focus:border-brand-500"
         />
-      </label>
+      </div>
 
       {/* rules */}
       <div className="mt-2 rounded-3xl bg-white p-4 ring-1 ring-slate-100">

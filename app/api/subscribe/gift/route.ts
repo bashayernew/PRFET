@@ -3,14 +3,15 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
-import { getPrices, subPrice } from "@/lib/pricing";
+import { getPrices } from "@/lib/pricing";
 import { createInvoice } from "@/lib/invoice";
 
 const DAYS = 30;
 
+// Only the two plans now — gift one month of Golden (basic) or VIP. No month bundles.
 const schema = z.object({
   peerId: z.string().min(1).max(40),
-  months: z.number().int().min(1).max(12).default(1),
+  tier: z.enum(["basic", "vip"]).default("basic"),
 });
 
 /**
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
-  const { peerId, months } = parsed.data;
+  const { peerId, tier } = parsed.data;
 
   if (peerId === payload.sub) return NextResponse.json({ error: "self" }, { status: 400 });
 
@@ -37,29 +38,30 @@ export async function POST(req: Request) {
   if (!peer) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
   const prices = await getPrices();
-  const giftAmount = subPrice(prices, months); // bundles (3/6/12) get bundle pricing
+  const giftAmount = tier === "vip" ? prices.vip : prices.subscription; // one month of the chosen plan
+  const planLabel = tier === "vip" ? "VIP" : "Golden";
 
-  // A gift never cuts their existing time short — it stacks on top of it.
+  // A gift is one month, and never cuts their existing time short — it stacks on top.
   const base = peer.premiumUntil && peer.premiumUntil > new Date() ? peer.premiumUntil : new Date();
-  const expiresAt = new Date(base.getTime() + months * DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(base.getTime() + DAYS * 24 * 60 * 60 * 1000);
 
   await prisma.subscription.create({
     data: {
       userId: peerId,
       gifterId: payload.sub,
-      plan: "premium",
+      plan: tier === "vip" ? "vip" : "premium",
       amount: giftAmount,
       currency: "USD",
       expiresAt,
     },
   });
 
-  await prisma.user.update({ where: { id: peerId }, data: { isPremium: true, premiumUntil: expiresAt } });
+  await prisma.user.update({ where: { id: peerId }, data: { isPremium: true, premiumTier: tier, premiumUntil: expiresAt } });
 
   const me = await prisma.user.findUnique({ where: { id: payload.sub }, select: { displayName: true } });
 
   // Drop a line in the chat, so both sides can see it happened.
-  const body = `🎁 ${me?.displayName ?? ""} — ${months} × premium`;
+  const body = `🎁 ${me?.displayName ?? ""} — ${planLabel} premium`;
   const mineConvo = await prisma.conversation.upsert({
     where: { userId_peerId: { userId: payload.sub, peerId } },
     create: { userId: payload.sub, peerId },
@@ -73,10 +75,10 @@ export async function POST(req: Request) {
   await prisma.message.create({ data: { conversationId: mineConvo.id, fromMe: true, kind: "gift", body } });
   await prisma.message.create({ data: { conversationId: theirConvo.id, fromMe: false, kind: "gift", body } });
 
-  notify(peerId, "gift_premium", { actorId: payload.sub, targetId: payload.sub, text: String(months) }).catch(() => {});
+  notify(peerId, "gift_premium", { actorId: payload.sub, targetId: payload.sub, text: planLabel }).catch(() => {});
 
   // the gifter is the one billed
-  await createInvoice({ userId: payload.sub, kind: "subscription", description: `Gifted Premium — ${months} month(s)`, amount: giftAmount });
+  await createInvoice({ userId: payload.sub, kind: "subscription", description: `Gifted ${planLabel} Premium (1 month)`, amount: giftAmount });
 
   return NextResponse.json({ ok: true, expiresAt: expiresAt.toISOString(), amount: giftAmount });
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, ArrowLeft, Send, Sparkles, Trash2, UserRound, ImagePlus, Mic, Volume2, Clapperboard, Download, Crown, Check, X, AudioLines, CreditCard } from "lucide-react";
+import { ArrowRight, ArrowLeft, Send, Sparkles, Trash2, UserRound, ImagePlus, Mic, Volume2, Clapperboard, Download, Crown, Check, X, AudioLines, CreditCard, Paperclip } from "lucide-react";
 // Trash2 is reused for removing a saved character from the picker.
 import { useI18n } from "@/lib/i18n";
 import { apiGet, apiPost, apiDelete, getAccessToken } from "@/lib/api";
@@ -17,6 +17,13 @@ const CHAR_IMG = { saud: "/saud.png", dana: "/dana.png" } as const;
 /** One-time welcome clip, played before a new subscriber picks their character. */
 const INTRO_VIDEO = "/welcome.mp4";
 const INTRO_KEY = "prfet.ai.intro";
+
+/**
+ * Voice chat (talking to the AI, dictation, and read-aloud) is HIDDEN for now.
+ * Flip this to `true` to bring it back instantly — all the underlying code stays in place,
+ * only the UI entry points are gated by this flag.
+ */
+const VOICE_CHAT = false;
 
 /**
  * An assistant character: a name, an optional gender, and an optional portrait.
@@ -231,8 +238,12 @@ export default function AskScreen() {
     try { setIntroDone(localStorage.getItem(INTRO_KEY) === "1"); } catch { setIntroDone(true); }
     setIntroReady(true);
   }, []);
-  function finishIntro() {
+  // Persist "seen" as soon as it STARTS (not only on end), so leaving mid-video never replays it (#10/#11).
+  function markIntroSeen() {
     try { localStorage.setItem(INTRO_KEY, "1"); } catch { /* private mode — show once per session */ }
+  }
+  function finishIntro() {
+    markIntroSeen();
     setIntroDone(true);
   }
   // voice: speak replies aloud + dictate questions (browser Web Speech API — free)
@@ -298,7 +309,7 @@ export default function AskScreen() {
    * the browser voice for that chunk only. Running out of monthly voice minutes stops
    * everything and shows the renew / add-ons prompt (no robotic fallback).
    */
-  async function playTts(text: string, onDone?: () => void) {
+  async function playTts(text: string, onDone?: () => void, opts?: { live?: boolean }) {
     const spoken = cleanForSpeech(text) || text;
     const seq = ++speakSeq.current;
     const chunks = splitForSpeech(spoken);
@@ -313,6 +324,7 @@ export default function AskScreen() {
         const res = await apiPost<{ url?: string; error?: string }>("/api/ai/tts", {
           text: chunk,
           ...(persona?.gender ? { gender: persona.gender } : {}),
+          ...(opts?.live ? { meter: false } : {}), // live mode meters time via the heartbeat instead
         }, token);
         if (seq !== speakSeq.current) return;
         if (res.data?.error === "voice_limit") {
@@ -482,14 +494,35 @@ export default function AskScreen() {
   const [liveText, setLiveText] = useState("");   // what the assistant just said
   const [liveHeard, setLiveHeard] = useState(""); // what we heard from the person
   const liveRef = useRef(false); // read inside callbacks, where `live` would be stale
+  const voiceTickRef = useRef<ReturnType<typeof setInterval> | null>(null); // live-voice metering heartbeat
 
   function stopLive() {
     liveRef.current = false;
     setLive(false);
     setLiveState("idle");
+    if (voiceTickRef.current) { clearInterval(voiceTickRef.current); voiceTickRef.current = null; }
     try { recRef.current?.stop(); } catch { /* already stopped */ }
     stopSpeaking();
   }
+
+  // Fix #3/#18: release the microphone whenever the screen is left or the app is backgrounded,
+  // so recording never lingers. Covers leaving the AI page and the OS sending the app to background.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "hidden") {
+        stopLive();
+        try { recRef.current?.stop(); } catch { /* already stopped */ }
+        setListening(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      stopLive();
+      try { recRef.current?.stop(); } catch { /* already stopped */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Cut the assistant off and go straight back to listening (tap-to-interrupt). */
   function interruptLive() {
@@ -537,8 +570,9 @@ export default function AskScreen() {
     if (!res.ok || !res.data?.reply) {
       if (res.data?.error === "premium_only") { stopLive(); setStatus("premium_only"); return; }
       if (res.data?.error === "msg_limit") { setCapHit("messages"); refreshUsage(); stopLive(); return; }
-      setErr(t("ask.error"));
-      stopLive();
+      // A transient failure (timeout, one bad turn, token hiccup) shouldn't drop the whole voice
+      // session — skip this turn and go back to listening so the conversation keeps going.
+      if (liveRef.current) { setLiveState("listening"); setTimeout(() => { if (liveRef.current) liveListen(); }, 500); }
       return;
     }
 
@@ -551,7 +585,7 @@ export default function AskScreen() {
     // and the overlap left the mic hung. Tapping the screen still interrupts (interruptLive).
     playTts(reply.body, () => {
       if (liveRef.current) setTimeout(() => { if (liveRef.current) liveListen(); }, 350);
-    });
+    }, { live: true });
   }
 
   function startLive() {
@@ -562,6 +596,13 @@ export default function AskScreen() {
     setLiveHeard("");
     liveRef.current = true;
     setLive(true);
+    // Heartbeat: charge the monthly voice cap for the TIME spent talking (see /api/ai/voice-tick).
+    if (voiceTickRef.current) clearInterval(voiceTickRef.current);
+    voiceTickRef.current = setInterval(() => {
+      apiPost<{ error?: string }>("/api/ai/voice-tick", { seconds: 15 }, getAccessToken() || undefined)
+        .then((res) => { if (!res.ok && res.data?.error === "voice_limit") { stopLive(); setCapHit("voice"); refreshUsage(); } })
+        .catch(() => {});
+    }, 15000);
     liveListen();
   }
 
@@ -631,26 +672,30 @@ export default function AskScreen() {
 
   async function send() {
     const text = input.trim();
-    if (!text || sending || status) return;
-    // If they clearly asked for a picture or a clip, generate it instead of just chatting —
-    // so "create an image of a beach" + Send just works, no need to find the buttons.
-    if (wantsVideo(text)) { setInput(""); genVideo(text); return; }
-    if (wantsImage(text)) { setInput(""); genImage(text); return; }
+    if ((!text && !pendingImg) || sending || status) return;
+    // With an image attached we always chat (vision) — never trigger image/video generation.
+    if (!pendingImg) {
+      if (wantsVideo(text)) { setInput(""); genVideo(text); return; }
+      if (wantsImage(text)) { setInput(""); genImage(text); return; }
+    }
+    const img = pendingImg;
     setInput("");
-    sendText(text);
+    setPendingImg(null);
+    sendText(text, img || undefined);
   }
 
   /** Send a message that didn't come from the input box (e.g. a post evaluation). */
-  async function sendText(text: string) {
-    if (!text || sending || status) return;
+  async function sendText(text: string, image?: { data: string; mime: string; url: string }) {
+    if ((!text && !image) || sending || status) return;
     setErr(null);
-    const temp: Msg = { id: `tmp-${Date.now()}`, role: "user", body: text };
+    const temp: Msg = { id: `tmp-${Date.now()}`, role: "user", body: text, ...(image ? { imageUrl: image.url } : {}) };
     setMessages((m) => [...m, temp]);
     setSending(true);
     const token = getAccessToken() || undefined;
     const res = await apiPost<{ reply?: Msg; error?: string }>("/api/ai/chat", {
-      message: text,
+      message: text || (dir === "rtl" ? "صف هذه الصورة من فضلك." : "Describe this image."),
       ...(persona?.name ? { persona: persona.name, ...(persona.gender ? { personaGender: persona.gender } : {}) } : {}),
+      ...(image ? { image: { data: image.data, mime: image.mime } } : {}),
     }, token);
     setSending(false);
     if (res.ok && res.data?.reply) {
@@ -663,6 +708,20 @@ export default function AskScreen() {
       if (e === "msg_limit") { setCapHit("messages"); refreshUsage(); return; }
       setErr(e === "rate_limited" || e === "quota" ? t("ask.quota") : t("ask.error"));
     }
+  }
+
+  // Attach a photo to SEND to the AI so it can see it — multimodal vision (#9). Separate from
+  // the image GENERATION below.
+  const [pendingImg, setPendingImg] = useState<{ data: string; mime: string; url: string } | null>(null);
+  const attachRef = useRef<HTMLInputElement | null>(null);
+  function attachPhoto(file: File) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result || "");
+      const data = url.split(",")[1] || ""; // strip the "data:...;base64," prefix for the API
+      if (data) setPendingImg({ data, mime: file.type || "image/jpeg", url });
+    };
+    reader.readAsDataURL(file);
   }
 
   // Generate an image from the current input (paid Imagen via Gemini).
@@ -817,6 +876,7 @@ export default function AskScreen() {
           playsInline
           // No `controls` and no skip button: it must be watched to the end. When it
           // finishes (or can't play at all) we move straight on to the picker.
+          onPlay={markIntroSeen}
           onEnded={finishIntro}
           onError={finishIntro}
           className="max-h-full max-w-full"
@@ -855,11 +915,13 @@ export default function AskScreen() {
         )}
         {persona && !gateMsg && (
           <>
-            {/* talk to the character out loud, face to face */}
-            <button onClick={startLive} aria-label={t("ask.liveStart")} title={t("ask.liveStart")}
-              className="me-1 grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
-              <AudioLines className="h-[18px] w-[18px]" />
-            </button>
+            {/* talk to the character out loud, face to face — hidden while VOICE_CHAT is off */}
+            {VOICE_CHAT && (
+              <button onClick={startLive} aria-label={t("ask.liveStart")} title={t("ask.liveStart")}
+                className="me-1 grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
+                <AudioLines className="h-[18px] w-[18px]" />
+              </button>
+            )}
             <button onClick={() => setPersona(null)} aria-label={t("ask.changeChar")} className="grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white active:scale-95">
               <UserRound className="h-[18px] w-[18px]" />
             </button>
@@ -1099,7 +1161,7 @@ export default function AskScreen() {
                     m.role === "user" ? "bg-brand-600 text-white" : "bg-white text-ink ring-1 ring-slate-200"
                   }`}>
                     <span className="whitespace-pre-wrap">{m.body}</span>
-                    {m.role === "model" && m.body && (
+                    {VOICE_CHAT && m.role === "model" && m.body && (
                       <button onClick={() => speak(m)} aria-label={t("ask.listen")}
                         className={`ms-1.5 inline-grid h-6 w-6 place-items-center rounded-full align-middle ${speakingId === m.id ? "bg-brand-100 text-brand-700" : "text-muted hover:bg-slate-100"}`}>
                         <Volume2 className="h-3.5 w-3.5" />
@@ -1133,7 +1195,7 @@ export default function AskScreen() {
           { key: "images", label: t("ask.uImages"), c: usage.images },
           { key: "videos", label: t("ask.uVideos"), c: usage.videos },
           { key: "voice", label: t("ask.uVoice"), c: usage.voiceMin, unit: t("ask.uMin") },
-        ].filter((i) => !i.c.unlimited);
+        ].filter((i) => !i.c.unlimited && (VOICE_CHAT || i.key !== "voice")); // hide voice while it's off
         if (!items.length) return null;
         return (
           <div className="no-scrollbar flex gap-2 overflow-x-auto border-t border-slate-100 bg-white px-3 py-2">
@@ -1156,16 +1218,18 @@ export default function AskScreen() {
       {/* input */}
       {!gateMsg && (
         <div className="flex items-end gap-2 border-t border-slate-100 bg-white px-3 pb-[calc(env(safe-area-inset-bottom)+10px)] pt-2.5">
-          <button
-            onClick={toggleMic}
-            aria-label={t("ask.dictate")}
-            title={t("ask.dictate")}
-            className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-all active:scale-95 ${
-              listening ? "bg-red-500 text-white" : "bg-slate-100 text-slate-500"
-            }`}
-          >
-            <Mic className="h-5 w-5" />
-          </button>
+          {VOICE_CHAT && (
+            <button
+              onClick={toggleMic}
+              aria-label={t("ask.dictate")}
+              title={t("ask.dictate")}
+              className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-all active:scale-95 ${
+                listening ? "bg-red-500 text-white" : "bg-slate-100 text-slate-500"
+              }`}
+            >
+              <Mic className="h-5 w-5" />
+            </button>
+          )}
           <button
             onClick={() => genImage()}
             disabled={imgBusy || vidBusy || sending}
@@ -1188,6 +1252,29 @@ export default function AskScreen() {
           >
             <Clapperboard className="h-5 w-5" />
           </button>
+          <input ref={attachRef} type="file" accept="image/*" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) attachPhoto(f); e.target.value = ""; }} />
+          <button
+            onClick={() => attachRef.current?.click()}
+            disabled={imgBusy || vidBusy || sending}
+            aria-label={dir === "rtl" ? "إرفاق صورة" : "Attach photo"}
+            title={dir === "rtl" ? "إرفاق صورة" : "Attach photo"}
+            className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-all active:scale-95 ${
+              !imgBusy && !vidBusy && !sending ? "bg-slate-100 text-slate-500" : "cursor-not-allowed bg-slate-100 text-slate-400"
+            }`}
+          >
+            <Paperclip className="h-5 w-5" />
+          </button>
+          {pendingImg && (
+            <div className="relative h-11 w-11 shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={pendingImg.url} alt="" className="h-11 w-11 rounded-2xl object-cover ring-1 ring-slate-200" />
+              <button onClick={() => setPendingImg(null)} aria-label="remove"
+                className="absolute -end-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-slate-800 text-white">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
@@ -1199,10 +1286,10 @@ export default function AskScreen() {
           />
           <button
             onClick={send}
-            disabled={!input.trim() || sending}
+            disabled={(!input.trim() && !pendingImg) || sending}
             aria-label={t("ask.send")}
             className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl transition-all ${
-              input.trim() && !sending ? "bg-brand-600 text-white active:scale-95" : "cursor-not-allowed bg-slate-100 text-slate-400"
+              (input.trim() || pendingImg) && !sending ? "bg-brand-600 text-white active:scale-95" : "cursor-not-allowed bg-slate-100 text-slate-400"
             }`}
           >
             <Send className="h-5 w-5" strokeWidth={2.4} />

@@ -136,6 +136,13 @@ email flow is finalized), `AD_AUTO_APPROVE`.
    Golden/VIP limits LIVE from the dashboard** (`components/subscribe-screen.tsx` + templated
    `premium.*` i18n keys), fixed the "120 GB calls" typo → minutes.
 
+## Voice chat (talking to the AI) — DISABLED via flag
+- Hidden for now behind `const VOICE_CHAT = false;` at the top of `components/ask-screen.tsx`.
+  Gates 4 UI entry points: live-voice button, per-message read-aloud, mic dictation, and the
+  voice-minutes row in the usage bar. **Flip to `true` to restore instantly** — all the underlying
+  code (live loop, `/api/ai/voice-tick`, TTS metering) stays in place. The fix-list voice items
+  (#7 VAD, #8 audio) are therefore moot while this is off.
+
 ## How the AI limits work (dashboard-driven)
 - Caps live in **AppSettings** (one row, `id="app"`), edited in the **admin dashboard → AI section**,
   per tier: `aiMessagesBasic/Vip`, `aiImagesBasic/Vip`, `aiVideosBasic/Vip`, `callMinutesBasic/Vip`,
@@ -146,6 +153,8 @@ email flow is finalized), `AD_AUTO_APPROVE`.
 - **Plan displays that mirror the dashboard (prices + limits, live):** subscribe page
   (`subscribe-screen.tsx`), the AI-page plans popup (`ask-screen.tsx`, `ask.plans*` i18n templated),
   and the settings usage bar. Qualitative feature lists (`premium.gReview` etc.) are static text.
-- **KNOWN leftover:** old 1/3/6/12-month bundle pickers still exist in `settings-screen.tsx`
-  (`tiers` state) and the "pay for this person" gift flow (`chat-screen.tsx`) — should be reduced
-  to the two plans (Golden/VIP). Not done yet.
+- **Gift flow (FIXED):** the "pay for this person" sheet (`chat-screen.tsx` + `app/api/subscribe/gift/route.ts`)
+  now gifts one month of **Golden or VIP** at the live dashboard price (was 1/3/6/12-month bundles at a
+  hardcoded $30). Sets `premiumTier` on the recipient.
+- Minor leftover: `settings-screen.tsx` still has an unused `tiers` state referencing sub3m/6m/12m,
+  but it only renders the monthly price (no bundle UI shown). Cosmetic; not urgent.

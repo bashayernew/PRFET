@@ -8,7 +8,7 @@ import { geminiChat } from "@/lib/gemini";
 // One-shot AI text generation (not stored). Powers the "Write with AI" buttons on
 // the ad and job screens. Text only — no paid image/voice services.
 const schema = z.object({
-  kind: z.enum(["job_ad", "ad_caption", "cv", "generic"]),
+  kind: z.enum(["job_ad", "ad_caption", "cv", "generic", "post"]),
   prompt: z.string().min(1).max(2000),
 });
 
@@ -16,6 +16,7 @@ const INSTRUCTIONS: Record<string, string> = {
   job_ad: "Write a clear, attractive job-vacancy post from the details below. Concise, professional, ready to publish. Output ONLY the post text, no preamble.",
   ad_caption: "Write a short, catchy commercial ad caption from the details below. 1–3 sentences, ready to publish. Output ONLY the caption, no preamble.",
   cv: "Write a professional CV / experience summary from the details below. Output ONLY the text, no preamble.",
+  post: "Write an engaging social-media post caption from the idea below. Natural and friendly, a couple of short lines, and add 2–4 relevant hashtags at the end. Output ONLY the caption, no preamble.",
   generic: "Complete the request below. Output ONLY the result, no preamble.",
 };
 
