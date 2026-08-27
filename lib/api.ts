@@ -49,11 +49,30 @@ export const refreshAccessToken = refreshAccess;
 
 const NO_REFRESH = ["/api/auth/refresh", "/api/auth/login", "/api/auth/register", "/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/forgot", "/api/auth/reset"];
 
+/**
+ * "ios" / "android" inside the Capacitor shell, "" in a browser.
+ *
+ * Capacitor injects this global synchronously before app code runs, so no dynamic import
+ * is needed and the web bundle stays free of native modules. The server reads it to decide
+ * whether App Store payment rules apply to a purchase (see `lib/credits.ts`).
+ */
+function platformHeader(): string {
+  if (typeof window === "undefined") return "";
+  const cap = (window as unknown as {
+    Capacitor?: { getPlatform?: () => string; isNativePlatform?: () => boolean };
+  }).Capacitor;
+  if (!cap?.isNativePlatform?.()) return "";
+  const p = cap.getPlatform?.() || "";
+  return p === "ios" || p === "android" ? p : "";
+}
+
 async function request<T = unknown>(method: string, path: string, body?: unknown, token?: string): Promise<ApiResult<T>> {
   const doFetch = (tok?: string) => {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const platform = platformHeader();
+    if (platform) headers["x-prfet-platform"] = platform;
     return fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   };
 

@@ -9,7 +9,7 @@ _Last updated: 2026-08-17._
 ## What this is
 PRFET is a mobile-first **social app** for a Kuwaiti client (Al Aridi). It's **18+**, bilingual
 **Arabic/English** (`lib/i18n.tsx`), with a dark inverted-purple theme. Internally the codebase
-is still named **"Herot"** (`herot@0.1.0`, package id `com.herot.app`) — the product/brand name
+is still named **"Herot"** (`herot@0.1.0`, package id `com.prfet.app`) — the product/brand name
 shown to users is **PRFET**. Live at **https://prfet.com**.
 
 Features: profiles/feed, live **rooms** (LiveKit) + 1:1 **calls** (coturn/WebRTC), DMs, an **AI
@@ -89,7 +89,7 @@ email flow is finalized), `AD_AUTO_APPROVE`.
 ---
 
 ## Google Play (in progress)
-- Native shell = **Capacitor 6**, `appId com.herot.app`, appName "PRFET", **loads prfet.com** in a
+- Native shell = **Capacitor 6**, `appId com.prfet.app`, appName "PRFET", **loads prfet.com** in a
   WebView (so most updates ship via a normal web deploy — no new AAB needed).
 - Android project: **`D:\app\android`** (open THIS in Android Studio, not the old `~/Desktop/app`).
 - Toolchain: **targetSdk/compileSdk 36**, AGP **8.13.2** / Gradle **8.13** (via AGP Upgrade Assistant).
