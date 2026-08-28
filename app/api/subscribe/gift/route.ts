@@ -5,6 +5,7 @@ import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
 import { getPrices } from "@/lib/pricing";
 import { createInvoice } from "@/lib/invoice";
+import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
 
 const DAYS = 30;
 
@@ -40,6 +41,18 @@ export async function POST(req: Request) {
   const prices = await getPrices();
   const giftAmount = tier === "vip" ? prices.vip : prices.subscription; // one month of the chosen plan
   const planLabel = tier === "vip" ? "VIP" : "Golden";
+
+  // Native apps pay for the gift from the App Store credit wallet (the web keeps its existing
+  // FastSpring / test path). Charge BEFORE granting so a failed payment never gifts for free.
+  if (isNativeRequest(req)) {
+    const paid = await spendCredits(payload.sub, toCents(giftAmount));
+    if (!paid.ok) {
+      return NextResponse.json(
+        { error: "insufficient_credits", price: giftAmount, needCents: paid.short, balanceCents: paid.balance },
+        { status: 402 },
+      );
+    }
+  }
 
   // A gift is one month, and never cuts their existing time short — it stacks on top.
   const base = peer.premiumUntil && peer.premiumUntil > new Date() ? peer.premiumUntil : new Date();

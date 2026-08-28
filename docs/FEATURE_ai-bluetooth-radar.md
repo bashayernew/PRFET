@@ -40,6 +40,19 @@ account; a **subscriber** can then text or add them.
    iOS. This is the main engineering challenge and must be done in the `android/` native layer,
    wired to the existing `window.PrfetNative` / `window.__prfetBleFound` bridge.
 
-## Status
-Spec only — not built yet. Web parts (1–5) are straightforward; the native background scanner (6)
-is the real work and is Android‑native, not web. Best done as a dedicated feature pass.
+## Status (updated 2026-08-28)
+**Web parts 1–5 BUILT + deployed:**
+- `prisma/schema.prisma` → new `RadarHit` model (auto-created via `prisma db push` on deploy).
+- `app/api/search/ble-tick/route.ts` → heartbeat, premium-gated, meters the `callMinutes` quota
+  via `voiceCapCheck`/`voiceBump` (403 `radar_limit` / `premium_only`).
+- `app/api/search/radar/route.ts` → POST persists a batch of BLE hits + returns the enriched,
+  privacy-filtered report; GET returns the saved report; DELETE clears it. Premium-gated.
+- `components/discover-screen.tsx` → Radar toggle (next to Bluetooth), keeps the scan running,
+  persists hits, 15s heartbeat meters time, shows the report with "left the area" badge + clear.
+- Quota relabelled "Bluetooth radar minutes" everywhere: subscribe perks (`premium.gCalls/vCalls`),
+  add-on (`premium.addonVoice*`), and the AI's live pricing answer (`lib/gemini.ts` Plans.radarMin,
+  fed from `callMinutesBasic/Vip`). New i18n `radar.*`.
+
+**Still NATIVE (part 6, not built):** true background/screen-off BLE scanning needs an Android
+foreground service in `android/`. Today the radar runs while the Discover screen is open
+(foreground) and persists everyone caught — a working MVP. Background scanning is the next pass.

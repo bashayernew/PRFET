@@ -26,8 +26,8 @@ export type Turn = { role: "user" | "model"; text: string };
 /** Live plan pricing + monthly limits, read from the dashboard and passed into the chat so
  *  the assistant always quotes current numbers (0 = unlimited). */
 export type Plans = {
-  golden: { price: number; images: number; videos: number; messages: number; storageGb: number };
-  vip: { price: number; images: number; videos: number; messages: number; storageGb: number };
+  golden: { price: number; images: number; videos: number; messages: number; storageGb: number; radarMin: number };
+  vip: { price: number; images: number; videos: number; messages: number; storageGb: number; radarMin: number };
   addons: { media: number; storage: number };
 };
 
@@ -283,9 +283,12 @@ function systemPrompt(locale: string, persona?: { name?: string; gender?: string
     ? [
         "AI plans & limits — when the user asks about pricing, plans, or limits, use THESE exact",
         "current numbers (do not invent or use any other figures):",
-        `- Golden subscription ($${plans.golden.price}/month): ${cap(plans.golden.images)} images, ${cap(plans.golden.videos)} videos, ${cap(plans.golden.messages)} assistant messages, and ${cap(plans.golden.storageGb)} GB storage — per month.`,
-        `- VIP subscription ($${plans.vip.price}/month): ${cap(plans.vip.images)} images, ${cap(plans.vip.videos)} videos, ${cap(plans.vip.messages)} assistant messages, and ${cap(plans.vip.storageGb)} GB storage — per month.`,
+        `- Golden subscription ($${plans.golden.price}/month): ${cap(plans.golden.images)} images, ${cap(plans.golden.videos)} videos, ${cap(plans.golden.messages)} assistant messages, ${cap(plans.golden.storageGb)} GB storage, and ${cap(plans.golden.radarMin)} Bluetooth radar minutes — per month.`,
+        `- VIP subscription ($${plans.vip.price}/month): ${cap(plans.vip.images)} images, ${cap(plans.vip.videos)} videos, ${cap(plans.vip.messages)} assistant messages, ${cap(plans.vip.storageGb)} GB storage, and ${cap(plans.vip.radarMin)} Bluetooth radar minutes — per month.`,
         `- Top-up packs: extra media pack $${plans.addons.media}, extra storage pack $${plans.addons.storage}.`,
+        "- \"Bluetooth radar minutes\" power AI Radar (subscribers only): it keeps scanning nearby and",
+        "  reports everyone who passed close to you, even after they left. Manual Bluetooth discovery",
+        "  is free for everyone; only the auto-radar spends radar minutes.",
         "- Text chat is free. Image/video limits reset every month. When a limit is reached, the",
         "  user can buy a top-up pack or upgrade their plan.",
         "Present these plainly and only when asked; do not push sales in normal conversation.",
@@ -299,8 +302,10 @@ function systemPrompt(locale: string, persona?: { name?: string; gender?: string
     personaLine,
     "",
     "About PRFET: a location-based social and business app. People discover nearby",
-    "businesses, services and other members, follow them, message and call them, post",
-    "stories and posts, join audio meeting rooms, browse and post jobs, and buy ads.",
+    "businesses, services and other members — including nearby discovery over Bluetooth,",
+    "which finds people and businesses physically around you (free for everyone, opt-in on",
+    "both sides). They follow each other, message and call, post stories and posts, join",
+    "audio meeting rooms, browse and post jobs, and buy ads.",
     "Premium is a paid subscription unlocking a custom name colour, precise location",
     "sharing, social links and other perks. There is a jobs section for companies posting",
     "vacancies and individuals advertising that they are looking for work.",

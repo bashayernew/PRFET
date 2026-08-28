@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Search, Star, MapPin, Bluetooth } from "lucide-react";
+import { Search, Star, MapPin, Bluetooth, Radar, X } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { catIcon } from "@/lib/cat-icons";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { useLocationSync } from "@/lib/use-location-sync";
-import { apiGet, apiPost, getAccessToken } from "@/lib/api";
+import { apiGet, apiPost, apiDelete, getAccessToken } from "@/lib/api";
 import { vipStyle } from "@/lib/vip";
 import { distDisplay } from "@/lib/geo";
 
@@ -71,6 +71,60 @@ export default function DiscoverScreen() {
     native?.bleStop?.();
     (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
   }, []);
+
+  // --- AI Bluetooth Radar (premium) ------------------------------------------------------
+  // Unlike the manual scan, radar keeps running and PERSISTS everyone it catches into a report
+  // that survives even after they leave. It shares the one radio with the manual scan, meters
+  // its runtime against the monthly "radar minutes" cap, and is subscriber-gated.
+  type RadarPerson = BlePerson & { firstSeen: string; lastSeen: string };
+  const [radarOn, setRadarOn] = useState(false);
+  const [radarPeople, setRadarPeople] = useState<RadarPerson[]>([]);
+  const [radarGate, setRadarGate] = useState<null | "premium" | "limit">(null);
+  const radarTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function stopRadar() {
+    const native = (window as unknown as { PrfetNative?: { bleStop?: () => void } }).PrfetNative;
+    native?.bleStop?.();
+    (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
+    if (radarTimer.current) { clearInterval(radarTimer.current); radarTimer.current = null; }
+    setRadarOn(false);
+  }
+
+  function toggleRadar() {
+    if (radarOn) { stopRadar(); return; }
+    const native = (window as unknown as { PrfetNative?: { bleStart?: () => void; bleStop?: () => void } }).PrfetNative;
+    if (!native?.bleStart) { setBleUnsupported(true); return; }
+    if (bleOn) { native.bleStop?.(); setBleOn(false); } // share the one radio
+    setRadarGate(null);
+    const token = getAccessToken() || undefined;
+    const w = window as unknown as { __prfetBleFound?: (arr: { id: string; distance?: number }[]) => void };
+    w.__prfetBleFound = async (arr) => {
+      const res = await apiPost<{ people: RadarPerson[]; error?: string }>("/api/search/radar", { found: arr }, token);
+      if (res.status === 403) { setRadarGate("premium"); stopRadar(); return; }
+      if (res.ok && res.data?.people) setRadarPeople(res.data.people);
+    };
+    native.bleStart();
+    setRadarOn(true);
+    // Heartbeat: charge the monthly radar-minutes cap for the time it runs.
+    radarTimer.current = setInterval(async () => {
+      const res = await apiPost<{ error?: string }>("/api/search/ble-tick", { seconds: 15 }, token);
+      if (res.status === 403) { setRadarGate(res.data?.error === "radar_limit" ? "limit" : "premium"); stopRadar(); }
+    }, 15000);
+  }
+
+  async function clearRadar() {
+    await apiDelete("/api/search/radar", getAccessToken() || undefined);
+    setRadarPeople([]);
+  }
+
+  // Load any saved report on open (subscribers only; others just get nothing).
+  useEffect(() => {
+    if (!ready) return;
+    apiGet<{ people: RadarPerson[] }>("/api/search/radar", getAccessToken() || undefined).then((r) => {
+      if (r.ok && r.data?.people) setRadarPeople(r.data.people);
+    });
+    return () => { if (radarTimer.current) clearInterval(radarTimer.current); };
+  }, [ready]);
 
   // Search runs on demand — by name, by distance, or both. The server does the filtering,
   // measuring from where this phone actually is.
@@ -160,6 +214,15 @@ export default function DiscoverScreen() {
           >
             <Bluetooth className="h-4.5 w-4.5" />
           </button>
+
+          {/* AI Radar toggle — keeps scanning + builds a report (premium) */}
+          <button
+            onClick={toggleRadar}
+            aria-label={t("radar.title")}
+            className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-white/20 active:scale-95 ${radarOn ? "bg-white text-brand-700" : "bg-white/10 text-white"}`}
+          >
+            <Radar className={`h-4.5 w-4.5 ${radarOn ? "animate-pulse" : ""}`} />
+          </button>
         </div>
       </div>
 
@@ -195,6 +258,56 @@ export default function DiscoverScreen() {
                     {p.distance != null && <span className="shrink-0 text-[11.5px] font-bold text-brand-600">≈ {ld(Math.round(p.distance), locale)} {t("home.m")}</span>}
                   </Link>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+        {/* AI Radar gate / report */}
+        {radarGate && (
+          <div className="mb-3 flex items-center gap-2 rounded-2xl bg-amber-50 px-3.5 py-3 ring-1 ring-amber-200">
+            <Radar className="h-4 w-4 shrink-0 text-amber-600" />
+            <span className="flex-1 text-[12.5px] font-bold leading-snug text-amber-700">
+              {t(radarGate === "limit" ? "radar.limit" : "radar.premiumOnly")}
+            </span>
+            <Link href="/subscribe" className="shrink-0 rounded-xl bg-amber-500 px-2.5 py-1 text-[11.5px] font-bold text-white">{t("radar.unlock")}</Link>
+          </div>
+        )}
+        {(radarOn || radarPeople.length > 0) && (
+          <div className="mb-5">
+            <div className="mb-2 flex items-center gap-2">
+              <Radar className={`h-4 w-4 text-brand-600 ${radarOn ? "animate-pulse" : ""}`} />
+              <h2 className="text-[15px] font-extrabold text-ink">{t("radar.report")}</h2>
+              <span className="text-[12.5px] font-bold text-muted">{ld(radarPeople.length, locale)}</span>
+              <span className="flex-1" />
+              {radarPeople.length > 0 && (
+                <button onClick={clearRadar} aria-label={t("radar.clear")} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 text-muted active:scale-95">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {radarOn && <p className="mb-2 text-[11.5px] font-medium text-muted">{t("radar.scanning")}</p>}
+            {radarPeople.length === 0 ? (
+              !radarOn && <p className="py-6 text-center text-[13px] font-medium text-muted">{t("radar.empty")}</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {radarPeople.map((p) => {
+                  const gone = Date.now() - new Date(p.lastSeen).getTime() > 60000; // >1 min = probably left
+                  return (
+                    <Link key={p.id} href={`/business/${p.id}`} className="flex items-center gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-100 active:scale-[0.99]">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-brand-50 text-[15px] font-extrabold text-brand-600">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {p.avatarUrl ? <img src={p.avatarUrl} alt="" className="h-full w-full object-cover" /> : (p.displayName || "•").charAt(0).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14px] font-extrabold text-ink" style={vipStyle({ isPremium: p.isPremium, textColor: p.textColor })}>{p.displayName}</span>
+                        {p.category && <span className="block truncate text-[11.5px] font-medium text-muted">{t(p.category)}</span>}
+                      </span>
+                      {gone
+                        ? <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-bold text-muted">{t("radar.left")}</span>
+                        : p.distance != null && <span className="shrink-0 text-[11.5px] font-bold text-brand-600">≈ {ld(Math.round(p.distance), locale)} {t("home.m")}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>

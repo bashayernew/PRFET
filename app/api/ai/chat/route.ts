@@ -116,13 +116,13 @@ export async function POST(req: Request) {
       where: { id: "app" },
       select: {
         priceSubscription: true, priceVip: true, priceAddonMedia: true, priceAddonStorage: true,
-        aiImagesBasic: true, aiVideosBasic: true, aiMessagesBasic: true, storageGbBasic: true,
-        aiImagesVip: true, aiVideosVip: true, aiMessagesVip: true, storageGbVip: true,
+        aiImagesBasic: true, aiVideosBasic: true, aiMessagesBasic: true, storageGbBasic: true, callMinutesBasic: true,
+        aiImagesVip: true, aiVideosVip: true, aiMessagesVip: true, storageGbVip: true, callMinutesVip: true,
       },
     }).catch(() => null);
     const plans = st ? {
-      golden: { price: st.priceSubscription, images: st.aiImagesBasic, videos: st.aiVideosBasic, messages: st.aiMessagesBasic, storageGb: st.storageGbBasic },
-      vip: { price: st.priceVip, images: st.aiImagesVip, videos: st.aiVideosVip, messages: st.aiMessagesVip, storageGb: st.storageGbVip },
+      golden: { price: st.priceSubscription, images: st.aiImagesBasic, videos: st.aiVideosBasic, messages: st.aiMessagesBasic, storageGb: st.storageGbBasic, radarMin: st.callMinutesBasic },
+      vip: { price: st.priceVip, images: st.aiImagesVip, videos: st.aiVideosVip, messages: st.aiMessagesVip, storageGb: st.storageGbVip, radarMin: st.callMinutesVip },
       addons: { media: st.priceAddonMedia, storage: st.priceAddonStorage },
     } : undefined;
 
