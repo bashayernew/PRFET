@@ -111,7 +111,22 @@ export async function POST(req: Request) {
       .map((r) => ({ role: r.role === "model" ? "model" : "user", text: r.body }));
     history.push({ role: "user", text });
 
-    const result = await geminiChat(history, locale, parsed.data.persona ? { name: parsed.data.persona, gender: parsed.data.personaGender } : undefined, img);
+    // Live plan prices + limits from the dashboard, so the assistant never quotes stale numbers.
+    const st = await prisma.appSettings.findUnique({
+      where: { id: "app" },
+      select: {
+        priceSubscription: true, priceVip: true, priceAddonMedia: true, priceAddonStorage: true,
+        aiImagesBasic: true, aiVideosBasic: true, aiMessagesBasic: true, storageGbBasic: true,
+        aiImagesVip: true, aiVideosVip: true, aiMessagesVip: true, storageGbVip: true,
+      },
+    }).catch(() => null);
+    const plans = st ? {
+      golden: { price: st.priceSubscription, images: st.aiImagesBasic, videos: st.aiVideosBasic, messages: st.aiMessagesBasic, storageGb: st.storageGbBasic },
+      vip: { price: st.priceVip, images: st.aiImagesVip, videos: st.aiVideosVip, messages: st.aiMessagesVip, storageGb: st.storageGbVip },
+      addons: { media: st.priceAddonMedia, storage: st.priceAddonStorage },
+    } : undefined;
+
+    const result = await geminiChat(history, locale, parsed.data.persona ? { name: parsed.data.persona, gender: parsed.data.personaGender } : undefined, img, plans);
     if (!result.ok) {
       // Nothing is stored on failure, so the member can simply try again.
       const status = result.error === "quota" ? 429 : result.error === "not_configured" ? 503 : 502;

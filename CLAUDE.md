@@ -59,8 +59,14 @@ the Gemini AI key, and other keys were missing and had to be **merged from the o
 Key groups in `.env`: `DOMAIN`, `DATABASE_URL`, `POSTGRES_PASSWORD`, `JWT_ACCESS_SECRET`,
 `JWT_REFRESH_SECRET`, `TURN_SECRET` + `NEXT_PUBLIC_TURN_*`, `LIVEKIT_API_KEY/SECRET` +
 `NEXT_PUBLIC_LIVEKIT_URL`, `VAPID_*`, `SMTP_*` (email OTP), `GEMINI_*` (AI), `DASH_MASTER_EMAIL`,
-`SUPPORT_EMAIL`, `OTP_DEV_CODE=1234` (testing backdoor — signup code is always 1234 until real
-email flow is finalized), `AD_AUTO_APPROVE`.
+`SUPPORT_EMAIL`, `AD_AUTO_APPROVE`, and `REVIEW_EMAIL` + `REVIEW_OTP` (see below).
+
+⚠️ **OTP is REAL now** — `lib/auth.ts` emails a random 4-digit code; there is NO global `1234`
+backdoor anymore (the old `OTP_DEV_CODE` note was stale). **App-store reviewer login:**
+`verify-otp` accepts a fixed code for ONE email only, set via `.env`:
+`REVIEW_EMAIL=review@prfet.com` + `REVIEW_OTP=1234`. That account also has password `12345678`
+(so password login works too). Keep this account + env alive while the app is on the stores —
+Google/Apple re-review every update. Display name: "PRFET Reviewer".
 
 ---
 
@@ -135,6 +141,42 @@ email flow is finalized), `AD_AUTO_APPROVE`.
    (it's anti-abuse only — real limits are the dashboard caps); **plans page now pulls the
    Golden/VIP limits LIVE from the dashboard** (`components/subscribe-screen.tsx` + templated
    `premium.*` i18n keys), fixed the "120 GB calls" typo → minutes.
+
+## Session 2026-08-27 — AI media everywhere + Gemini reliability
+- **Post screen** (`components/create-screen.tsx`): added a **Photo/Video toggle** (post an image
+  OR a video, 25/120 MB), plus a **Generate image/video with AI** button (describe → `/api/ai/image`
+  or `/api/ai/video` → converts the returned data-URL to a File → normal `/api/upload` → publish).
+  "Write with AI" caption button already existed.
+- **Ad screen** (`components/ads-screen.tsx`): added **Generate video with AI** next to the existing
+  Generate-image button (same start+poll flow). Upload already accepted image/video.
+- **Gemini reliability** (`lib/gemini.ts`): the AI "Couldn't reply" was Google returning
+  **503 UNAVAILABLE "high demand"** (verified by hitting the model directly) — NOT key/billing/auth
+  (image worked, billing funded). Fix: **auto-retry chat + image on 503/500/502** (3 tries, backoff);
+  added `logGeminiFail()` so the REAL Google error now prints to `docker compose logs app` (routes
+  only surface a generic 502 to the browser). New i18n: `create.type*`, `create.aiMake*`, `ai.makeVideo`.
+- **Video status:** generation **STARTS fine** (Veo returned an operation name in the direct test);
+  remaining failure is in poll/download of the finished clip (slow / memory on the 1 GB box). New
+  logging will show the poll result — diagnose next.
+- Diagnose a live AI failure: `docker compose logs --tail=80 app | grep gemini` (run on the SERVER).
+
+## AI model reliability (Session 2026-08-28)
+- **Root cause of "Couldn't reply":** Google 503-overloaded the `gemini-flash-latest` alias, and
+  later `gemini-2.0-flash` was retired (404 → "use gemini-3.6-flash"). Fix: pin a current model
+  via env + auto-fallback in code.
+- **Pinned model:** `.env` on the server has `GEMINI_MODEL=gemini-3.6-flash` (chat). Update this one
+  line + `docker compose up -d --force-recreate app` when a model retires — no rebuild.
+- **Self-healing fallback (`lib/gemini.ts`):** chat, image AND video each try the pinned model, then
+  fall back to a second model on 404 (retired) / 503 (overloaded). Env knobs: `GEMINI_MODEL(_FALLBACK)`,
+  `GEMINI_IMAGE_MODEL(_FALLBACK)`, `GEMINI_VIDEO_MODEL(_FALLBACK)`. Default fallback = the code's
+  DEFAULT_* (the never-retired `-latest` alias for chat).
+- **AI pricing is now LIVE:** `app/api/ai/chat/route.ts` reads `AppSettings` (Golden/VIP prices +
+  image/video/message/storage caps) and passes them to `geminiChat` → `systemPrompt`. The assistant
+  no longer hardcodes old prices ($9.99/$4.99); it quotes the dashboard values. Voice minutes dropped
+  from the AI's pricing answer (voice chat is disabled).
+- **Email/OTP:** the Resend account (a.almnees@gmail.com) was SUSPENDED → all OTP emails failed
+  (401 "API key is invalid"). Reactivation form submitted (transactional/OTP only, no marketing).
+  Once active: make a fresh key, set `SMTP_PASS=re_...` in `.env`, force-recreate. Reviewer login
+  (`review@prfet.com` + code 1234) works regardless.
 
 ## Voice chat (talking to the AI) — DISABLED via flag
 - Hidden for now behind `const VOICE_CHAT = false;` at the top of `components/ask-screen.tsx`.

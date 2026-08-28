@@ -36,7 +36,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ posts: [] });
     }
     const follows = await prisma.follow.findMany({ where: { userId: me }, select: { targetId: true } });
-    where = { userId: { in: [...follows.map((f) => f.targetId), me] } };
+    if (follows.length === 0) {
+      // New member who doesn't follow anyone yet: show a global feed so the app isn't empty.
+      // As soon as they follow at least one account, it becomes a personalised following feed.
+      where = {};
+    } else {
+      where = { userId: { in: [...follows.map((f) => f.targetId), me] } };
+    }
   }
 
   const posts = await prisma.post.findMany({

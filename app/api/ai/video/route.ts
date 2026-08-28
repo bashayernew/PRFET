@@ -66,5 +66,5 @@ export async function GET(req: Request) {
 
   const r = await geminiVideoPoll(op);
   if (!r.ok) return NextResponse.json({ error: r.error }, { status: 502 });
-  return NextResponse.json({ done: r.done, url: r.dataUrl });
+  return NextResponse.json({ done: r.done, url: r.url });
 }

@@ -6,12 +6,30 @@
  * video models later) is a config change, not a code change.
  */
 
+import { writeFile, mkdir } from "fs/promises";
+import path from "path";
+import crypto from "crypto";
+
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
+
+/** Log the REAL reason a Gemini call failed so it shows up in `docker logs app`
+ *  (the API routes only surface a generic "failed"/502 to the browser). */
+function logGeminiFail(where: string, detail?: string) {
+  console.error(`[gemini] ${where} failed:`, (detail || "unknown").slice(0, 500));
+}
 
 /** Current fast model — the "-latest" alias won't get retired out from under us. */
 const DEFAULT_MODEL = "gemini-flash-latest";
 
 export type Turn = { role: "user" | "model"; text: string };
+
+/** Live plan pricing + monthly limits, read from the dashboard and passed into the chat so
+ *  the assistant always quotes current numbers (0 = unlimited). */
+export type Plans = {
+  golden: { price: number; images: number; videos: number; messages: number; storageGb: number };
+  vip: { price: number; images: number; videos: number; messages: number; storageGb: number };
+  addons: { media: number; storage: number };
+};
 
 export function geminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
@@ -95,25 +113,38 @@ export async function geminiTTS(text: string, gender?: "male" | "female" | ""): 
 }
 
 type StartResult = { ok: true; op: string } | { ok: false; error: "not_configured" | "quota" | "failed"; detail?: string };
-type PollResult = { ok: true; done: boolean; dataUrl?: string } | { ok: false; error: "failed"; detail?: string };
+type PollResult = { ok: true; done: boolean; url?: string } | { ok: false; error: "failed"; detail?: string };
 
 /** Kick off a video generation. Returns the long-running operation name to poll. */
 export async function geminiVideoStart(prompt: string): Promise<StartResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, error: "not_configured" };
-  const model = process.env.GEMINI_VIDEO_MODEL || DEFAULT_VIDEO_MODEL;
+  // Try the pinned video model, then a fallback (set GEMINI_VIDEO_MODEL / GEMINI_VIDEO_MODEL_FALLBACK)
+  // so a retired preview model (404) doesn't kill video generation.
+  const primary = process.env.GEMINI_VIDEO_MODEL || DEFAULT_VIDEO_MODEL;
+  const fallback = process.env.GEMINI_VIDEO_MODEL_FALLBACK || DEFAULT_VIDEO_MODEL;
+  const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
+  let lastDetail = "";
   try {
-    const res = await fetch(`${ENDPOINT}/${model}:predictLongRunning`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: "16:9" } }),
-    });
-    if (res.status === 429) return { ok: false, error: "quota" };
-    if (!res.ok) return { ok: false, error: "failed", detail: (await res.text().catch(() => "")).slice(0, 300) };
-    const data = await res.json();
-    if (!data?.name) return { ok: false, error: "failed", detail: "no operation name" };
-    return { ok: true, op: data.name };
-  } catch {
+    for (const model of models) {
+      const res = await fetch(`${ENDPOINT}/${model}:predictLongRunning`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: "16:9" } }),
+      });
+      if (res.status === 429) return { ok: false, error: "quota" };
+      if (!res.ok) {
+        lastDetail = (await res.text().catch(() => "")).slice(0, 300);
+        logGeminiFail(`video start (${model}) HTTP ${res.status}`, lastDetail);
+        continue; // 404 retired / overloaded → try the next model
+      }
+      const data = await res.json();
+      if (!data?.name) { lastDetail = "no operation name"; continue; }
+      return { ok: true, op: data.name };
+    }
+    return { ok: false, error: "failed", detail: lastDetail };
+  } catch (e) {
+    logGeminiFail("video start (network/timeout)", String(e));
     return { ok: false, error: "failed" };
   }
 }
@@ -134,18 +165,40 @@ export async function geminiVideoPoll(op: string): Promise<PollResult> {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${op}`, {
       headers: { "x-goog-api-key": key },
     });
-    if (!res.ok) return { ok: false, error: "failed", detail: (await res.text().catch(() => "")).slice(0, 300) };
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => "")).slice(0, 300);
+      logGeminiFail(`video poll HTTP ${res.status}`, detail);
+      return { ok: false, error: "failed", detail };
+    }
     const data = await res.json();
     if (!data?.done) return { ok: true, done: false };
+    // A finished operation can still carry an error (e.g. safety, quota) instead of a video.
+    if (data.error) {
+      logGeminiFail("video poll operation-error", JSON.stringify(data.error));
+      return { ok: false, error: "failed", detail: JSON.stringify(data.error).slice(0, 300) };
+    }
     const uri = findUri(data.response);
-    if (!uri) return { ok: false, error: "failed", detail: "no video uri" };
+    if (!uri) {
+      logGeminiFail("video poll", "done but no video uri: " + JSON.stringify(data.response || {}).slice(0, 300));
+      return { ok: false, error: "failed", detail: "no video uri" };
+    }
     // Download the video bytes (the file URI needs the key too).
     const vres = await fetch(uri, { headers: { "x-goog-api-key": key } });
-    if (!vres.ok) return { ok: false, error: "failed", detail: "download failed" };
+    if (!vres.ok) {
+      logGeminiFail(`video download HTTP ${vres.status}`, uri);
+      return { ok: false, error: "failed", detail: "download failed" };
+    }
     const buf = Buffer.from(await vres.arrayBuffer());
-    const mime = vres.headers.get("content-type") || "video/mp4";
-    return { ok: true, done: true, dataUrl: `data:${mime};base64,${buf.toString("base64")}` };
-  } catch {
+    // Save the clip to /public/uploads and return a NORMAL URL. Returning multi-MB base64
+    // through the API response is what choked the 1 GB box; a real URL is tiny and plays
+    // directly as post/ad/chat media.
+    const dir = path.join(process.cwd(), "public", "uploads");
+    await mkdir(dir, { recursive: true });
+    const name = `${crypto.randomUUID()}.mp4`;
+    await writeFile(path.join(dir, name), buf);
+    return { ok: true, done: true, url: `/uploads/${name}` };
+  } catch (e) {
+    logGeminiFail("video poll (network/timeout)", String(e));
     return { ok: false, error: "failed" };
   }
 }
@@ -155,52 +208,92 @@ export async function geminiImage(prompt: string, inputImage?: string): Promise<
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, error: "not_configured" };
 
-  const model = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_MODEL;
   const reqParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [{ text: prompt }];
   if (inputImage) {
     const m = inputImage.match(/^data:([^;]+);base64,(.+)$/);
     if (m) reqParts.push({ inlineData: { mimeType: m[1], data: m[2] } });
   }
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60_000);
-  try {
-    const res = await fetch(`${ENDPOINT}/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: reqParts }],
-        generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
-      }),
-    });
-    if (res.status === 429) return { ok: false, error: "quota" };
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      return { ok: false, error: "failed", detail: detail.slice(0, 300) };
+  const body = JSON.stringify({
+    contents: [{ role: "user", parts: reqParts }],
+    generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+  });
+
+  // Same self-healing model selection as chat: try the pinned image model, then a fallback
+  // (set GEMINI_IMAGE_MODEL / GEMINI_IMAGE_MODEL_FALLBACK). Survives retirement (404) + overload (503).
+  const primary = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_MODEL;
+  const fallback = process.env.GEMINI_IMAGE_MODEL_FALLBACK || DEFAULT_IMAGE_MODEL;
+  const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
+
+  const MAX_ATTEMPTS = 3;
+  let lastDetail = "";
+  for (const model of models) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 60_000);
+      try {
+        const res = await fetch(`${ENDPOINT}/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          signal: ctrl.signal,
+          body,
+        });
+        if (res.status === 429) return { ok: false, error: "quota" };
+        if (!res.ok) {
+          lastDetail = await res.text().catch(() => "");
+          if ((res.status === 503 || res.status === 500 || res.status === 502) && attempt < MAX_ATTEMPTS) {
+            await new Promise((r) => setTimeout(r, 900 * attempt));
+            continue;
+          }
+          logGeminiFail(`image (${model}) HTTP ${res.status}`, lastDetail);
+          break; // 404 retired or overload exhausted → try the next model
+        }
+        const data = await res.json();
+        const parts: Array<{ inlineData?: { data?: string; mimeType?: string } }> = data?.candidates?.[0]?.content?.parts || [];
+        const img = parts.find((p) => p.inlineData?.data);
+        const b64 = img?.inlineData?.data;
+        const mime = img?.inlineData?.mimeType || "image/png";
+        if (!b64) return { ok: false, error: "blocked" };
+        return { ok: true, dataUrl: `data:${mime};base64,${b64}` };
+      } catch (e) {
+        lastDetail = String(e);
+        logGeminiFail(`image (${model}) network/timeout`, lastDetail);
+        break; // try the next model
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    const data = await res.json();
-    const parts: Array<{ inlineData?: { data?: string; mimeType?: string } }> = data?.candidates?.[0]?.content?.parts || [];
-    const img = parts.find((p) => p.inlineData?.data);
-    const b64 = img?.inlineData?.data;
-    const mime = img?.inlineData?.mimeType || "image/png";
-    if (!b64) return { ok: false, error: "blocked" };
-    return { ok: true, dataUrl: `data:${mime};base64,${b64}` };
-  } catch {
-    return { ok: false, error: "failed" };
-  } finally {
-    clearTimeout(timer);
   }
+  logGeminiFail(`image all models failed (${models.join(", ")})`, lastDetail);
+  return { ok: false, error: "failed" };
 }
 
 /**
  * The assistant's brief. It knows PRFET specifically AND answers general questions —
  * both, per the product decision.
  */
-function systemPrompt(locale: string, persona?: { name?: string; gender?: string }): string {
+function systemPrompt(locale: string, persona?: { name?: string; gender?: string }, plans?: Plans): string {
   const name = (persona?.name || "").trim();
   const personaLine = name
     ? `Your name is ${name}. You are a friendly personal companion${persona?.gender === "female" ? " (speak as a female persona)" : persona?.gender === "male" ? " (speak as a male persona)" : ""}. Introduce yourself as ${name} when it fits, and keep a warm, personable tone.`
     : "";
+  // Pricing/limits are LIVE from the dashboard (passed in as `plans`) so the assistant never
+  // quotes stale numbers. If not provided, point the user to the in-app Plans page.
+  const cap = (n: number) => (n === 0 ? "unlimited" : String(n));
+  const pricingLines = plans
+    ? [
+        "AI plans & limits — when the user asks about pricing, plans, or limits, use THESE exact",
+        "current numbers (do not invent or use any other figures):",
+        `- Golden subscription ($${plans.golden.price}/month): ${cap(plans.golden.images)} images, ${cap(plans.golden.videos)} videos, ${cap(plans.golden.messages)} assistant messages, and ${cap(plans.golden.storageGb)} GB storage — per month.`,
+        `- VIP subscription ($${plans.vip.price}/month): ${cap(plans.vip.images)} images, ${cap(plans.vip.videos)} videos, ${cap(plans.vip.messages)} assistant messages, and ${cap(plans.vip.storageGb)} GB storage — per month.`,
+        `- Top-up packs: extra media pack $${plans.addons.media}, extra storage pack $${plans.addons.storage}.`,
+        "- Text chat is free. Image/video limits reset every month. When a limit is reached, the",
+        "  user can buy a top-up pack or upgrade their plan.",
+        "Present these plainly and only when asked; do not push sales in normal conversation.",
+      ]
+    : [
+        "For current subscription prices and limits, tell the user to open the Plans/Subscribe page",
+        "in the app, where the live pricing and limits are shown. Do not guess specific numbers.",
+      ];
   return [
     "You are the PRFET assistant, built into the PRFET app.",
     personaLine,
@@ -237,17 +330,7 @@ function systemPrompt(locale: string, persona?: { name?: string; gender?: string
     "be clinical or robotic. Keep it natural — one short empathetic touch, then the help.",
     "Do not diagnose or claim to detect emotions with certainty.",
     "",
-    "AI plans & limits — when the user asks about pricing, plans, limits, or 'how many",
-    "images/videos can I make', explain these clearly:",
-    "- VIP subscription ($9.99/month): 100 images, 20 videos, voice chat with your character",
-    "  up to 360 minutes, storage for your info, unlimited text chat, and rating posts.",
-    "- Basic subscription ($4.99/month): 35 images, 9 videos, voice chat up to 120 minutes,",
-    "  storage for your info, and rating posts.",
-    "- Top-up packs ($0.99 each): (a) 4 images + 2 videos, (b) 25 GB extra storage for 3",
-    "  months, (c) 120 extra voice minutes with your character.",
-    "- Text chat and basic voice are free. Image and video limits reset every month. When a",
-    "  monthly limit is reached, the user can buy a top-up pack or upgrade their plan.",
-    "Present these plainly and only when asked; do not push sales in normal conversation.",
+    ...pricingLines,
     "",
     "Guidelines:",
     `- Reply in the user's language. The app is currently set to ${locale === "ar" ? "Arabic" : "English"}; match whatever language they write in.`,
@@ -268,54 +351,79 @@ export type GeminiResult =
  * Send the conversation and get the next reply.
  * `history` should be oldest-first and already trimmed to a sane length.
  */
-export async function geminiChat(history: Turn[], locale: string, persona?: { name?: string; gender?: string }, image?: { data: string; mime: string }): Promise<GeminiResult> {
+export async function geminiChat(history: Turn[], locale: string, persona?: { name?: string; gender?: string }, image?: { data: string; mime: string }, plans?: Plans): Promise<GeminiResult> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return { ok: false, error: "not_configured" };
 
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30_000);
+  const body = JSON.stringify({
+    system_instruction: { parts: [{ text: systemPrompt(locale, persona, plans) }] },
+    contents: history.map((h, idx) => {
+      const parts: Array<Record<string, unknown>> = [{ text: h.text }];
+      // Attach the uploaded image to the newest user turn so the AI can see it (fix #9).
+      if (image && h.role === "user" && idx === history.length - 1) {
+        parts.push({ inline_data: { mime_type: image.mime, data: image.data } });
+      }
+      return { role: h.role, parts };
+    }),
+    generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
+  });
 
-  try {
-    const res = await fetch(`${ENDPOINT}/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      signal: ctrl.signal,
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt(locale, persona) }] },
-        contents: history.map((h, idx) => {
-          const parts: Array<Record<string, unknown>> = [{ text: h.text }];
-          // Attach the uploaded image to the newest user turn so the AI can see it (fix #9).
-          if (image && h.role === "user" && idx === history.length - 1) {
-            parts.push({ inline_data: { mime_type: image.mime, data: image.data } });
+  // Self-healing model selection: try the pinned/fast model first, then fall back to the
+  // never-retired "-latest" alias. This survives BOTH failure modes without any manual fix:
+  //   • the pinned model gets RETIRED (404) → we drop to the alias, which always resolves.
+  //   • the pinned model is OVERLOADED (503) → after quick retries we try the alias too.
+  // Set GEMINI_MODEL (fast, current) and optionally GEMINI_MODEL_FALLBACK in .env.
+  const primary = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  const fallback = process.env.GEMINI_MODEL_FALLBACK || DEFAULT_MODEL; // DEFAULT is the "-latest" alias
+  const models = fallback && fallback !== primary ? [primary, fallback] : [primary];
+
+  const MAX_ATTEMPTS = 3;
+  let lastDetail = "";
+  for (const model of models) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const res = await fetch(`${ENDPOINT}/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          signal: ctrl.signal,
+          body,
+        });
+
+        if (res.status === 429) return { ok: false, error: "quota" }; // real quota — don't retry/fallback
+        if (!res.ok) {
+          lastDetail = await res.text().catch(() => "");
+          // transient overload → retry the SAME model a couple of times (fast responses)
+          if ((res.status === 503 || res.status === 500 || res.status === 502) && attempt < MAX_ATTEMPTS) {
+            await new Promise((r) => setTimeout(r, 700 * attempt)); // 0.7s, 1.4s backoff
+            continue;
           }
-          return { role: h.role, parts };
-        }),
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
-      }),
-    });
+          logGeminiFail(`chat (${model}) HTTP ${res.status}`, lastDetail);
+          break; // 404 retired, or overload exhausted → fall through to the next model
+        }
 
-    if (res.status === 429) return { ok: false, error: "quota" };
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      return { ok: false, error: "failed", detail: detail.slice(0, 300) };
+        const data = await res.json();
+        const cand = data?.candidates?.[0];
+        // Gemini returns no text when its safety filters stop the answer.
+        if (!cand || cand.finishReason === "SAFETY") return { ok: false, error: "blocked" };
+
+        const text: string = (cand.content?.parts || [])
+          .map((p: { text?: string }) => p.text || "")
+          .join("")
+          .trim();
+
+        if (!text) return { ok: false, error: "blocked" };
+        return { ok: true, text };
+      } catch (e) {
+        lastDetail = String(e);
+        logGeminiFail(`chat (${model}) network/timeout`, lastDetail);
+        break; // network/timeout on this model → try the next one
+      } finally {
+        clearTimeout(timer);
+      }
     }
-
-    const data = await res.json();
-    const cand = data?.candidates?.[0];
-    // Gemini returns no text when its safety filters stop the answer.
-    if (!cand || cand.finishReason === "SAFETY") return { ok: false, error: "blocked" };
-
-    const text: string = (cand.content?.parts || [])
-      .map((p: { text?: string }) => p.text || "")
-      .join("")
-      .trim();
-
-    if (!text) return { ok: false, error: "blocked" };
-    return { ok: true, text };
-  } catch {
-    return { ok: false, error: "failed" };
-  } finally {
-    clearTimeout(timer);
   }
+  logGeminiFail(`chat all models failed (${models.join(", ")})`, lastDetail);
+  return { ok: false, error: "failed" };
 }

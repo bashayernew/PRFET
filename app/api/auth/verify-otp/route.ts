@@ -30,6 +30,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid_input" }, { status: 400 });
   }
 
+  // --- App-store reviewer login -------------------------------------------------------
+  // ONE designated email accepts ONE fixed code, so Google Play / App Store reviewers can
+  // always sign in without receiving the emailed OTP. This affects ONLY the single address
+  // in REVIEW_EMAIL — every other account still needs its own real, random, emailed code.
+  // Configure REVIEW_EMAIL + REVIEW_OTP in the server .env. Keep it while the app is listed.
+  const reviewEmail = process.env.REVIEW_EMAIL?.trim().toLowerCase();
+  const reviewOtp = process.env.REVIEW_OTP?.trim();
+  if (
+    reviewEmail && reviewOtp &&
+    parsed.data.identifier.trim().toLowerCase() === reviewEmail &&
+    parsed.data.code === reviewOtp
+  ) {
+    const rUser = await prisma.user.findFirst({ where: identifierWhere(parsed.data.identifier) });
+    if (rUser) {
+      const verified = await prisma.user.update({ where: { id: rUser.id }, data: { isVerified: true } });
+      const accessToken = signAccessToken(rUser.id);
+      const { token: refreshToken, expiresAt } = signRefreshToken(rUser.id);
+      await prisma.refreshToken.create({ data: { userId: rUser.id, tokenHash: sha256(refreshToken), expiresAt } });
+      return NextResponse.json({ accessToken, refreshToken, user: publicUser(verified) });
+    }
+  }
+
   const user = await prisma.user.findFirst({ where: identifierWhere(parsed.data.identifier) });
   if (!user) return NextResponse.json({ error: "invalid_code" }, { status: 400 });
 

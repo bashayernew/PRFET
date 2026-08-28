@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight, ArrowLeft, ImagePlus, CircleDashed,
-  UploadCloud, Repeat2, Bookmark, MessageCircle, X, Sparkles,
+  UploadCloud, Repeat2, Bookmark, MessageCircle, X, Sparkles, Video,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
-import { apiPost, apiUpload, getAccessToken } from "@/lib/api";
+import { apiGet, apiPost, apiUpload, getAccessToken } from "@/lib/api";
 import BottomNav from "@/components/bottom-nav";
 
 type Mode = "hub" | "post";
@@ -92,7 +92,6 @@ export default function CreateScreen() {
           </div>
         ) : (
           <Composer
-            kind="image"
             t={t}
             onDone={(msg) => { flash(msg); setMode("hub"); router.push("/feed"); }}
             onFail={(msg) => flash(msg)}
@@ -131,17 +130,16 @@ function HubCard({ icon, title, sub, tint, onClick }: { icon: React.ReactNode; t
 
 /** Media + caption + the three publishing rules. */
 function Composer({
-  kind,
   t,
   onDone,
   onFail,
 }: {
-  kind: "image" | "video";
   t: (k: string) => string;
   onDone: (msg: string) => void;
   onFail: (msg: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [media, setMedia] = useState<"image" | "video">("image"); // photo or video post
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
@@ -150,8 +148,63 @@ function Composer({
   const [allowComment, setAllowComment] = useState(true);
   const [busy, setBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiMediaBusy, setAiMediaBusy] = useState<null | "image" | "video">(null);
 
+  const kind = media;
   const MAX_MB = kind === "video" ? 120 : 25;
+
+  // Switch between a photo post and a video post; clear any chosen media so types don't cross.
+  function switchType(next: "image" | "video") {
+    if (next === media) return;
+    setMedia(next);
+    setFile(null);
+    setPreview(null);
+  }
+
+  // Turn a base64 data-URL (what the AI endpoints return) into a real File we can upload normally.
+  async function dataUrlToFile(dataUrl: string, name: string): Promise<File> {
+    const blob = await (await fetch(dataUrl)).blob();
+    return new File([blob], name, { type: blob.type || "application/octet-stream" });
+  }
+
+  // "Generate with AI" (image or video): describe it, the AI makes it, and it drops into the composer.
+  async function generateMedia() {
+    if (aiMediaBusy) return;
+    const isVideo = media === "video";
+    const idea = typeof window !== "undefined"
+      ? (window.prompt(t(isVideo ? "create.aiVideoPrompt" : "create.aiImagePrompt")) || "")
+      : "";
+    if (!idea.trim()) return;
+    setAiMediaBusy(isVideo ? "video" : "image");
+    const token = getAccessToken() || undefined;
+    try {
+      let dataUrl: string | undefined;
+      if (!isVideo) {
+        const res = await apiPost<{ url?: string; error?: string }>("/api/ai/image", { prompt: idea.trim() }, token);
+        if (!res.ok || !res.data?.url) throw new Error(res.data?.error || "failed");
+        dataUrl = res.data.url;
+      } else {
+        // video is async: start the job, then poll until it's rendered.
+        const start = await apiPost<{ op?: string; error?: string }>("/api/ai/video", { prompt: `${idea.trim()}. With natural ambient sound and fitting background music. Any spoken narration, dialogue, or on-screen text must be in the SAME language as this description.` }, token);
+        if (!start.ok || !start.data?.op) throw new Error(start.data?.error || "failed");
+        const op = start.data.op;
+        for (let i = 0; i < 40; i++) { // ~40 × 5s = up to ~3.5 min
+          await new Promise((r) => setTimeout(r, 5000));
+          const poll = await apiGet<{ done?: boolean; url?: string; error?: string }>(`/api/ai/video?op=${encodeURIComponent(op)}`, token);
+          if (poll.ok && poll.data?.done && poll.data.url) { dataUrl = poll.data.url; break; }
+          if (!poll.ok) throw new Error(poll.data?.error || "failed");
+        }
+        if (!dataUrl) throw new Error("timeout");
+      }
+      const f = await dataUrlToFile(dataUrl, isVideo ? "ai-video.mp4" : "ai-image.png");
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
+    } catch {
+      onFail(t("create.aiMediaFailed"));
+    } finally {
+      setAiMediaBusy(null);
+    }
+  }
 
   // "Write with AI" (#17): turn a short idea (or the current caption) into a ready-to-post caption.
   async function generateCaption() {
@@ -214,6 +267,12 @@ function Composer({
 
   return (
     <div>
+      {/* photo / video toggle */}
+      <div className="mb-3 flex gap-1 rounded-2xl bg-white p-1 ring-1 ring-slate-200">
+        <TypeTab active={media === "image"} icon={<ImagePlus className="h-4 w-4" />} label={t("create.typePhoto")} onClick={() => switchType("image")} />
+        <TypeTab active={media === "video"} icon={<Video className="h-4 w-4" />} label={t("create.typeVideo")} onClick={() => switchType("video")} />
+      </div>
+
       {/* media */}
       {preview ? (
         <div className="relative overflow-hidden rounded-3xl bg-black">
@@ -232,14 +291,29 @@ function Composer({
           </button>
         </div>
       ) : (
-        <button
-          onClick={() => fileRef.current?.click()}
-          className="flex h-44 w-full flex-col items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-slate-300 bg-white text-muted active:scale-[0.99]"
-        >
-          <UploadCloud className="h-8 w-8" />
-          <span className="text-[13.5px] font-bold">{t(kind === "video" ? "create.pickVideo" : "create.pickImage")}</span>
-          <span className="text-[11px] font-medium text-slate-400">{t("create.maxSize").replace("{mb}", String(MAX_MB))}</span>
-        </button>
+        <>
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={!!aiMediaBusy}
+            className="flex h-44 w-full flex-col items-center justify-center gap-2 rounded-3xl border-2 border-dashed border-slate-300 bg-white text-muted active:scale-[0.99] disabled:opacity-60"
+          >
+            <UploadCloud className="h-8 w-8" />
+            <span className="text-[13.5px] font-bold">{t(kind === "video" ? "create.pickVideo" : "create.pickImage")}</span>
+            <span className="text-[11px] font-medium text-slate-400">{t("create.maxSize").replace("{mb}", String(MAX_MB))}</span>
+          </button>
+          {/* let the AI make the media from a description */}
+          <button
+            type="button"
+            onClick={generateMedia}
+            disabled={!!aiMediaBusy}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-50 py-3 text-[13.5px] font-bold text-brand-700 ring-1 ring-brand-200 active:scale-[0.99] disabled:opacity-60"
+          >
+            <Sparkles className="h-4 w-4" />
+            {aiMediaBusy
+              ? t(aiMediaBusy === "video" ? "create.aiMakingVideo" : "create.aiMaking")
+              : t(kind === "video" ? "create.aiMakeVideo" : "create.aiMakeImage")}
+          </button>
+        </>
       )}
       <input ref={fileRef} type="file" accept={kind === "video" ? "video/*" : "image/*"} hidden onChange={pick} />
 
@@ -282,6 +356,18 @@ function Composer({
         {busy ? t("create.uploading") : t("create.publish")}
       </button>
     </div>
+  );
+}
+
+function TypeTab({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2 text-[13px] font-bold transition-colors ${active ? "bg-brand-600 text-white" : "text-muted"}`}
+    >
+      {icon}{label}
+    </button>
   );
 }
 

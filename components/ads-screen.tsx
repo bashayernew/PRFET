@@ -67,6 +67,7 @@ export default function AdsScreen() {
   const [caption, setCaption] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [aiImgBusy, setAiImgBusy] = useState(false);
+  const [aiVidBusy, setAiVidBusy] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [fileObj, setFileObj] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -152,6 +153,37 @@ export default function AdsScreen() {
         setPreviewKind("image");
       } catch { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); }
     } else { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); }
+  }
+
+  // "Generate video with AI" — makes a short ad clip from a short idea (async: start + poll).
+  async function aiVideo() {
+    if (aiVidBusy) return;
+    const brief = caption.trim() || (typeof window !== "undefined" ? window.prompt(t("ai.adPrompt")) || "" : "");
+    if (!brief.trim()) return;
+    setAiVidBusy(true);
+    const token = getAccessToken() || undefined;
+    const fail = () => { setToast(t("ai.failed")); setTimeout(() => setToast(null), 2200); };
+    try {
+      const start = await apiPost<{ op?: string; error?: string }>("/api/ai/video", { prompt: `Advertising video, high quality, eye-catching, with fitting background music and natural ambient sound. Any spoken narration, dialogue, or on-screen text must be in the SAME language as this description: ${brief.trim()}` }, token);
+      if (!start.ok || !start.data?.op) { fail(); return; }
+      const op = start.data.op;
+      let url: string | undefined;
+      for (let i = 0; i < 40; i++) { // ~40 × 5s = up to ~3.5 min
+        await new Promise((r) => setTimeout(r, 5000));
+        const poll = await apiGet<{ done?: boolean; url?: string }>(`/api/ai/video?op=${encodeURIComponent(op)}`, token);
+        if (poll.ok && poll.data?.done && poll.data.url) { url = poll.data.url; break; }
+        if (!poll.ok) { fail(); return; }
+      }
+      if (!url) { fail(); return; }
+      const blob = await (await fetch(url)).blob();
+      const file = new File([blob], "ai-ad.mp4", { type: blob.type || "video/mp4" });
+      setFileObj(file);
+      setFileName(file.name);
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(url);
+      setPreviewKind("video");
+    } catch { fail(); }
+    finally { setAiVidBusy(false); }
   }
 
   async function publish() {
@@ -451,7 +483,7 @@ export default function AdsScreen() {
             {previewUrl ? (
               <>
                 {previewKind === "video" ? (
-                  <video src={previewUrl} muted playsInline autoPlay loop className="max-h-56 w-full bg-black object-contain" />
+                  <video src={previewUrl} controls muted playsInline autoPlay loop className="max-h-56 w-full bg-black object-contain" />
                 ) : (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={previewUrl} alt="" className="max-h-56 w-full bg-slate-100 object-contain" />
@@ -472,11 +504,17 @@ export default function AdsScreen() {
             )}
           </button>
 
-          {/* generate the ad image with AI */}
-          <button onClick={aiImage} disabled={aiImgBusy}
-            className="mb-5 -mt-3 flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12.5px] font-extrabold text-amber-600 ring-1 ring-amber-200 hover:bg-amber-100 disabled:opacity-50 active:scale-95">
-            <Sparkles className="h-4 w-4" /> {aiImgBusy ? t("ai.writing") : t("ai.makeImage")}
-          </button>
+          {/* generate the ad image OR video with AI */}
+          <div className="mb-5 -mt-3 flex flex-wrap gap-2">
+            <button onClick={aiImage} disabled={aiImgBusy || aiVidBusy}
+              className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12.5px] font-extrabold text-amber-600 ring-1 ring-amber-200 hover:bg-amber-100 disabled:opacity-50 active:scale-95">
+              <Sparkles className="h-4 w-4" /> {aiImgBusy ? t("ai.writing") : t("ai.makeImage")}
+            </button>
+            <button onClick={aiVideo} disabled={aiImgBusy || aiVidBusy}
+              className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3.5 py-2 text-[12.5px] font-extrabold text-amber-600 ring-1 ring-amber-200 hover:bg-amber-100 disabled:opacity-50 active:scale-95">
+              <Sparkles className="h-4 w-4" /> {aiVidBusy ? t("ai.makingVideo") : t("ai.makeVideo")}
+            </button>
+          </div>
 
           {/* summary */}
           <div className="rounded-3xl border border-slate-100 bg-white p-4">
