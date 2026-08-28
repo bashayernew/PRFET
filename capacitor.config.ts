@@ -4,7 +4,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // (API routes + DB), the native app loads your HOSTED server URL rather than a
 // static bundle.
 const config: CapacitorConfig = {
-  appId: "com.herot.app",        // internal package id (invisible to users); matches the existing android/ project
+  appId: "com.prfet.app",        // permanent Apple/Google package id — can never be changed after first store submission
   appName: "PRFET",              // the name users see
   webDir: "public",              // placeholder (unused when server.url is set)
   server: {

@@ -32,7 +32,7 @@ The project is Capacitor-ready. Later, to ship to the App Store / Play Store:
 
 ```bash
 npm install @capacitor/core @capacitor/cli
-npx cap init Herot com.herot.app
+npx cap init Herot com.prfet.app
 # in next.config.ts: uncomment  output: "export"
 npm run build                 # produces the /out folder
 npx cap add ios               # needs a Mac + Xcode

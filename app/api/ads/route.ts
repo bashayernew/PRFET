@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, adPrice } from "@/lib/pricing";
 import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
+import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
 
 const ALLOWED_DAYS = [1, 2, 3, 7, 15, 30];
 
@@ -86,6 +87,25 @@ export async function POST(req: Request) {
   const prices = await getPrices();
   const price = freeAd || !adsPaid ? 0 : adPrice(prices, countryList.length, d.durationDays);
   const expiresAt = new Date(Date.now() + d.durationDays * 24 * 60 * 60 * 1000);
+
+  // Inside the native apps, Apple requires the money to move through the App Store. The
+  // price is still yours (the formula above is untouched) — it is just paid from the credit
+  // wallet the member topped up with. On the web nothing here applies and the flow is
+  // exactly as it was. Charge BEFORE creating the ad so a failed payment leaves no row.
+  if (price > 0 && isNativeRequest(req)) {
+    const paid = await spendCredits(payload.sub, toCents(price));
+    if (!paid.ok) {
+      return NextResponse.json(
+        {
+          error: "insufficient_credits",
+          price,
+          needCents: paid.short,
+          balanceCents: paid.balance,
+        },
+        { status: 402 },
+      );
+    }
+  }
 
   const ad = await prisma.ad.create({
     data: {

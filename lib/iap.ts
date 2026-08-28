@@ -1,0 +1,188 @@
+import { apiPost } from "@/lib/api";
+import { ALL_SUB_PRODUCT_IDS } from "@/lib/iap-products";
+
+/**
+ * In-app purchases for the native apps, via RevenueCat.
+ *
+ * Everything here is a no-op on the web — the same code ships to browsers, where FastSpring
+ * handles checkout instead (see `lib/billing.ts`). Plugins are imported dynamically with
+ * variable specifiers so the web bundle never pulls in native modules.
+ *
+ * The client's job is only to present Apple's purchase sheet. Granting premium happens on
+ * the server, from RevenueCat's webhook — `syncEntitlements()` just asks the server to look
+ * again so the UI updates immediately instead of after webhook latency.
+ */
+
+type PurchasesPlugin = {
+  configure(opts: { apiKey: string; appUserID?: string | null }): Promise<void>;
+  logIn(opts: { appUserID: string }): Promise<unknown>;
+  logOut(): Promise<unknown>;
+  getOfferings(): Promise<{ current?: RcOffering | null; all?: Record<string, RcOffering> }>;
+  purchaseStoreProduct(opts: { product: RcProduct }): Promise<unknown>;
+  purchasePackage(opts: { aPackage: RcPackage }): Promise<unknown>;
+  getProducts(opts: { productIdentifiers: string[] }): Promise<{ products: RcProduct[] }>;
+  restorePurchases(): Promise<unknown>;
+};
+
+export type RcProduct = {
+  identifier: string;
+  title?: string;
+  description?: string;
+  priceString?: string;
+  price?: number;
+  currencyCode?: string;
+};
+export type RcPackage = { identifier: string; product: RcProduct };
+export type RcOffering = { identifier: string; availablePackages: RcPackage[] };
+
+let configured = false;
+
+/** True only inside the Capacitor native shell. */
+export async function isNative(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  try {
+    const capName = "@capacitor/core";
+    const cap = (await import(/* webpackIgnore: true */ /* @vite-ignore */ capName)) as {
+      Capacitor?: { isNativePlatform?: () => boolean };
+    };
+    return !!cap?.Capacitor?.isNativePlatform?.();
+  } catch {
+    return false;
+  }
+}
+
+async function plugin(): Promise<PurchasesPlugin | null> {
+  if (!(await isNative())) return null;
+  try {
+    const name = "@revenuecat/purchases-capacitor";
+    const mod = (await import(/* webpackIgnore: true */ /* @vite-ignore */ name)) as {
+      Purchases?: PurchasesPlugin;
+      default?: PurchasesPlugin;
+    };
+    return mod.Purchases ?? mod.default ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start RevenueCat and tie it to this member.
+ *
+ * `appUserID` is our own user id — that is what makes the webhook able to say which account
+ * a purchase belongs to. Call this on login and after the session is restored. Calling it
+ * again with a different user switches accounts cleanly.
+ */
+export async function initPurchases(userId: string | null | undefined): Promise<boolean> {
+  const p = await plugin();
+  if (!p) return false;
+
+  // iOS and Android use different public keys; both are safe to ship in the client.
+  const apiKey =
+    (typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)
+      ? process.env.NEXT_PUBLIC_REVENUECAT_ANDROID_KEY
+      : process.env.NEXT_PUBLIC_REVENUECAT_IOS_KEY) || "";
+  if (!apiKey) return false;
+
+  try {
+    if (!configured) {
+      await p.configure({ apiKey, appUserID: userId || null });
+      configured = true;
+    } else if (userId) {
+      await p.logIn({ appUserID: userId });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Detach the device from this member on sign-out, so the next login is not attributed to them. */
+export async function endPurchasesSession(): Promise<void> {
+  const p = await plugin();
+  if (!p || !configured) return;
+  await p.logOut().catch(() => {});
+}
+
+/**
+ * The products to show on the paywall, with Apple's localised prices.
+ *
+ * Prefer the configured Offering (so you can change the paywall from RevenueCat's dashboard
+ * without shipping an app update); fall back to fetching the ids directly.
+ */
+export async function listProducts(): Promise<RcProduct[]> {
+  const p = await plugin();
+  if (!p) return [];
+  try {
+    const offerings = await p.getOfferings();
+    const packages = offerings?.current?.availablePackages ?? [];
+    if (packages.length) return packages.map((pkg) => pkg.product);
+  } catch {
+    /* fall through */
+  }
+  try {
+    const { products } = await p.getProducts({ productIdentifiers: ALL_SUB_PRODUCT_IDS });
+    return products ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Buy a product. Apple shows its own sheet; we get back either success or a cancellation.
+ *
+ * On success we ask the server to re-check with RevenueCat rather than telling it what was
+ * bought — the client's claim is worth nothing, and the server ignores it by design.
+ */
+export async function buy(productId: string, token: string): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> {
+  const p = await plugin();
+  if (!p) return { ok: false, error: "not_native" };
+
+  try {
+    const offerings = await p.getOfferings().catch(() => null);
+    const pkg = offerings?.current?.availablePackages?.find((x) => x.product?.identifier === productId);
+
+    if (pkg) {
+      await p.purchasePackage({ aPackage: pkg });
+    } else {
+      const { products } = await p.getProducts({ productIdentifiers: [productId] });
+      const product = products?.[0];
+      if (!product) return { ok: false, error: "product_unavailable" };
+      await p.purchaseStoreProduct({ product });
+    }
+
+    await syncEntitlements(token);
+    return { ok: true };
+  } catch (err) {
+    // The user backing out of Apple's sheet is not an error worth showing them.
+    const e = err as { code?: string | number; message?: string; userCancelled?: boolean };
+    const msg = String(e?.message || "");
+    if (e?.userCancelled || /cancel/i.test(msg)) return { ok: false, cancelled: true };
+    return { ok: false, error: msg || "purchase_failed" };
+  }
+}
+
+/**
+ * "Restore Purchases". Apple REQUIRES this to be reachable in any app selling
+ * non-consumables or subscriptions — an app without it gets rejected under Guideline 3.1.1.
+ */
+export async function restore(token: string): Promise<boolean> {
+  const p = await plugin();
+  if (!p) return false;
+  try {
+    await p.restorePurchases();
+    await syncEntitlements(token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Ask our server to re-read this member's entitlements from RevenueCat and apply them. */
+export async function syncEntitlements(token: string): Promise<boolean> {
+  try {
+    await apiPost("/api/iap/sync", {}, token);
+    return true;
+  } catch {
+    return false;
+  }
+}

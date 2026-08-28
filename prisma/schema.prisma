@@ -54,6 +54,10 @@ model User {
   freeAdsLeft     Int @default(0)
   freeJobPostLeft Int @default(0)
   freeSeekerLeft  Int @default(0)
+  // Credit wallet, in US cents. Apple forbids variable prices (an ad costs base +
+  // per-country + per-day), so inside the native apps members top up at fixed App Store
+  // price points and the dashboard price is spent from this balance. Web is unaffected.
+  creditCents     Int @default(0)
   // subscription auto-renewal: on by default, cancelling turns it off (premium
   // then runs to its end date and lapses). renewMonths = which bundle to rebill.
   autoRenew        Boolean @default(true)

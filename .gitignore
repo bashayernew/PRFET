@@ -21,3 +21,12 @@ next-env.d.ts
 *.docx
 Bashayer_Abouamer_Resume.docx
 Manayer_Abouamer_Resume.docx
+
+# env template SHOULD be tracked (the .env* rule above would otherwise hide it)
+!.env.example
+
+# scratch copy of local dev secrets — never commit
+local-env-copy-to-dotenv.txt
+
+# clone leftovers — safe to delete
+_to_delete/

@@ -22,7 +22,7 @@ your real hosted URL.
 From the project folder, after your server is live and `server.url` is set:
 ```
 npm install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android
-npx cap init Herot com.herot.app        # if not already initialized
+npx cap init Herot com.prfet.app        # if not already initialized
 npx cap add android
 npx cap add ios                          # Mac only
 npx cap sync

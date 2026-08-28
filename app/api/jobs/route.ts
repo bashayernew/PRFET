@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
 import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
+import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
 
 const schema = z.object({
   title: z.string().min(2).max(120),
@@ -111,6 +112,18 @@ export async function POST(req: Request) {
   const poster = await prisma.user.findUnique({ where: { id: payload.sub }, select: { freeJobPostLeft: true } });
   const freeJob = (poster?.freeJobPostLeft ?? 0) > 0 || !jobsPaid;
   const { jobPost } = await getPrices();
+
+  // Native apps pay the same dashboard price, but from the App Store credit wallet.
+  // Charge before creating the row so a failed payment leaves no orphan job ad.
+  if (!freeJob && jobPost > 0 && isNativeRequest(req)) {
+    const paid = await spendCredits(payload.sub, toCents(jobPost));
+    if (!paid.ok) {
+      return NextResponse.json(
+        { error: "insufficient_credits", price: jobPost, needCents: paid.short, balanceCents: paid.balance },
+        { status: 402 },
+      );
+    }
+  }
 
   const job = await prisma.job.create({
     data: {

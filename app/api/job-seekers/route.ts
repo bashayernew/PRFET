@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
 import { createInvoice } from "@/lib/invoice";
+import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
 
 const schema = z.object({
   name: z.string().min(2).max(80),
@@ -108,6 +109,19 @@ export async function POST(req: Request) {
   const existing = await prisma.jobSeeker.findUnique({ where: { userId: payload.sub } });
   const now = new Date();
   const expired = !existing || !existing.expiresAt || existing.expiresAt <= now;
+
+  // Only a fresh listing or a post-expiry renewal is chargeable — editing inside the paid
+  // month stays free, exactly as on the web. Native apps pay that same price from the
+  // App Store credit wallet, charged before the upsert so a failure writes nothing.
+  if (expired && seekerAd > 0 && isNativeRequest(req)) {
+    const paid = await spendCredits(payload.sub, toCents(seekerAd));
+    if (!paid.ok) {
+      return NextResponse.json(
+        { error: "insufficient_credits", price: seekerAd, needCents: paid.short, balanceCents: paid.balance },
+        { status: 402 },
+      );
+    }
+  }
 
   const seeker = await prisma.jobSeeker.upsert({
     where: { userId: payload.sub },
