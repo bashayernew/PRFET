@@ -32,6 +32,7 @@ type Settings = {
   storageGbBasic: number; storageGbVip: number; // media storage caps in GB (0 = unlimited)
   callMinutesBasic: number; callMinutesVip: number; // monthly AI-voice caps in minutes (0 = unlimited)
   vaultEnabled: boolean; // the personal vault feature
+  walletEnabled: boolean; // the credit wallet feature
   priceAddonVoice: number; priceAddonMedia: number; priceAddonStorage: number; // add-on pack prices (USD)
   aiEnabled: boolean; aiPremiumOnly: boolean; // assistant on/off, and paid-only
 };
@@ -54,6 +55,7 @@ const EMPTY: Settings = {
   storageGbBasic: 25, storageGbVip: 50,
   callMinutesBasic: 2000, callMinutesVip: 480,
   vaultEnabled: true,
+  walletEnabled: true,
   priceAddonVoice: 1.99, priceAddonMedia: 1.99, priceAddonStorage: 1.99,
   aiEnabled: true, aiPremiumOnly: true,
 };
@@ -598,7 +600,7 @@ export default function AdminScreen() {
   function set<K extends keyof Settings>(k: K, v: Settings[K]) { setS((prev) => ({ ...prev, [k]: v })); }
 
   /** Master feature switch — applies immediately (not waiting for the Save button). */
-  async function toggleFeature(k: "subEnabled" | "adsEnabled" | "jobsEnabled" | "aiEnabled" | "aiPremiumOnly" | "vaultEnabled", next: boolean) {
+  async function toggleFeature(k: "subEnabled" | "adsEnabled" | "jobsEnabled" | "aiEnabled" | "aiPremiumOnly" | "vaultEnabled" | "walletEnabled", next: boolean) {
     set(k, next);
     const res = await apiPatch<{ settings?: Settings }>("/api/settings", { [k]: next }, getAccessToken() || undefined);
     if (res.ok) flash(t("admin.saved"));
@@ -1892,6 +1894,7 @@ export default function AdminScreen() {
                   <p className="mt-2 text-[11px] font-medium leading-snug text-muted">{t("admin.aiCapsHint")}</p>
                   <div className="mt-2">
                     <FeatureRow label={t("admin.featVault")} on={s.vaultEnabled} onToggle={(v) => toggleFeature("vaultEnabled", v)} />
+                    <FeatureRow label={t("admin.featWallet")} on={s.walletEnabled} onToggle={(v) => toggleFeature("walletEnabled", v)} />
                   </div>
                   {/* Buyable add-on packs — prices only; what each grants is fixed */}
                   <div className="mt-3 border-t-2 border-slate-100 pt-3">

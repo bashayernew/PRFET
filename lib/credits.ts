@@ -17,6 +17,10 @@ import { prisma } from "@/lib/prisma";
 
 export const CENTS = 100;
 
+/** A wallet can never hold more than this. Keeps stored value sane and matches the store
+ *  limits for consumable balances. $500. */
+export const MAX_BALANCE_CENTS = 500 * CENTS;
+
 /** Dollars (as used throughout `lib/pricing.ts`) → integer cents. */
 export function toCents(dollars: number): number {
   return Math.round((dollars || 0) * CENTS);
@@ -32,12 +36,17 @@ export async function balance(userId: string): Promise<number> {
   return u?.creditCents ?? 0;
 }
 
-/** Top up. Called only from the RevenueCat webhook — never from a client request. */
+/** Top up. Called only from the RevenueCat webhook — never from a client request.
+ *  Caps the balance at MAX_BALANCE_CENTS ($500) so a wallet can never exceed the limit. */
 export async function addCredits(userId: string, cents: number): Promise<number> {
   if (!Number.isFinite(cents) || cents <= 0) return balance(userId);
+  const have = await balance(userId);
+  const room = Math.max(0, MAX_BALANCE_CENTS - have);
+  const add = Math.min(Math.round(cents), room);
+  if (add <= 0) return have; // already at the cap
   const u = await prisma.user.update({
     where: { id: userId },
-    data: { creditCents: { increment: Math.round(cents) } },
+    data: { creditCents: { increment: add } },
     select: { creditCents: true },
   });
   return u.creditCents;

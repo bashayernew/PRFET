@@ -24,10 +24,13 @@ export default function WalletScreen() {
   const ready = useRequireAuth();
   const Back = dir === "rtl" ? ArrowRight : ArrowLeft;
 
+  const MAX_BALANCE = 500; // dollars — a wallet can't hold more than this
+
   const [balance, setBalance] = useState(0);
   const [packs, setPacks] = useState<Pack[]>([]);
   const [loading, setLoading] = useState(true);
   const [native, setNative] = useState(false);
+  const [enabled, setEnabled] = useState(true); // admin can close the wallet from the dashboard
   const [busy, setBusy] = useState<string | null>(null); // productId being purchased
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -51,12 +54,15 @@ export default function WalletScreen() {
         if (r.ok && r.data?.user?.id) initPurchases(r.data.user.id);
       });
     });
+    // Respect the admin's wallet on/off switch.
+    fetch("/api/settings").then((r) => r.json()).then((d) => setEnabled(d?.settings?.walletEnabled !== false)).catch(() => {});
     refresh();
   }, [ready]);
 
   async function topUp(pack: Pack) {
     if (busy) return;
     if (!native) { flash(t("wallet.appOnly")); return; }
+    if (balance + pack.value > MAX_BALANCE) { flash(t("wallet.full")); return; } // $500 cap
     setBusy(pack.productId);
     const r = await buy(pack.productId, getAccessToken() || "");
     setBusy(null);
@@ -97,10 +103,12 @@ export default function WalletScreen() {
       <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-8 pt-5">
         <p className="mb-1 text-[13px] font-extrabold text-ink">{t("wallet.topUp")}</p>
         <p className="mb-3 text-[11.5px] font-medium leading-snug text-muted">
-          {native ? t("wallet.topUpHint") : t("wallet.appOnly")}
+          {native ? t("wallet.topUpHint") : t("wallet.appOnly")} {t("wallet.max")}
         </p>
 
-        {loading ? (
+        {!enabled ? (
+          <p className="py-8 text-center text-[13px] font-medium text-muted">{t("wallet.disabled")}</p>
+        ) : loading ? (
           <p className="py-8 text-center text-[13px] font-medium text-muted">…</p>
         ) : packs.length === 0 ? (
           <p className="py-8 text-center text-[13px] font-medium text-muted">{t("wallet.noPacks")}</p>

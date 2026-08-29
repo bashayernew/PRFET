@@ -629,6 +629,9 @@ model AppSettings {
   callMinutesVip   Int @default(480)  // AI-voice minutes/month for a VIP subscriber
   /// The personal vault feature (save phone numbers/notes). Off = hidden everywhere.
   vaultEnabled Boolean @default(true)
+  /// The credit wallet feature. On (default) = the Wallet screen + top-ups are available;
+  /// off = hidden everywhere. Admin can close/open it from the dashboard.
+  walletEnabled Boolean @default(true)
   /// Buyable add-on pack prices (USD), editable from the dashboard.
   /// voice = +120 AI-voice min (1 mo); media = +5 images/+2 videos/+200 messages (1 mo);
   /// storage = +25 GB (3 mo). What each pack grants lives in code (lib/ai-usage.ts).
