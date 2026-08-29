@@ -314,6 +314,20 @@ export default function SettingsScreen() {
           </Section>
         ) : null /* non-premium users get the upgrade row in the Subscription section above */}
 
+        {/* Admin-only: open/close the whole wallet feature for everyone */}
+        {me?.isAdmin && (
+          <div className="mt-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+            <span className="flex items-center gap-2 text-[13px] font-bold text-ink"><Wallet className="h-4 w-4 text-brand-600" /> {t("wallet.adminToggle")}</span>
+            <button
+              aria-label={t("wallet.adminToggle")}
+              onClick={async () => { const next = !walletOn; setWalletOn(next); await apiPatch("/api/settings", { walletEnabled: next }, getAccessToken() || undefined); }}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${walletOn ? "bg-brand-600" : "bg-slate-300"}`}
+            >
+              <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${walletOn ? "start-[22px]" : "start-0.5"}`} />
+            </button>
+          </div>
+        )}
+
         {/* Wallet — available to everyone (top up, then spend on subscriptions/ads/gifts) */}
         {walletOn && (
         <button onClick={() => router.push("/wallet")} className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white p-4 ring-1 ring-slate-100 active:scale-[0.99]">

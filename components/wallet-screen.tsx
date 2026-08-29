@@ -101,9 +101,12 @@ export default function WalletScreen() {
 
       {/* body */}
       <div className="no-scrollbar flex-1 overflow-y-auto px-5 pb-8 pt-5">
-        <p className="mb-1 text-[13px] font-extrabold text-ink">{t("wallet.topUp")}</p>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-[13px] font-extrabold text-ink">{t("wallet.topUp")}</p>
+          <span className="shrink-0 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-extrabold text-amber-700 ring-1 ring-amber-200">{t("wallet.max")}</span>
+        </div>
         <p className="mb-3 text-[11.5px] font-medium leading-snug text-muted">
-          {native ? t("wallet.topUpHint") : t("wallet.appOnly")} {t("wallet.max")}
+          {native ? t("wallet.topUpHint") : t("wallet.appOnly")}
         </p>
 
         {!enabled ? (
