@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { User, Store, Mail, MapPin, Eye, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check, Lock, Trash2, Bluetooth } from "lucide-react";
+import { User, Store, Mail, MapPin, Eye, Ruler, ImageDown, LogOut, ArrowLeft, ArrowRight, MessageCircle, Crown, Palette, Link2, Check, Lock, Trash2, Bluetooth, Wallet } from "lucide-react";
 import { useI18n, type Locale } from "@/lib/i18n";
 import { apiGet, apiPatch, apiDelete, logout, getAccessToken } from "@/lib/api";
 import { useRequireAuth } from "@/lib/use-auth";
@@ -311,6 +311,16 @@ export default function SettingsScreen() {
             )}
           </Section>
         ) : null /* non-premium users get the upgrade row in the Subscription section above */}
+
+        {/* Wallet — available to everyone (top up, then spend on subscriptions/ads/gifts) */}
+        <button onClick={() => router.push("/wallet")} className="mt-2 flex w-full items-center gap-3 rounded-2xl bg-white p-4 ring-1 ring-slate-100 active:scale-[0.99]">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-50 text-brand-600"><Wallet className="h-4 w-4" /></span>
+          <span className="flex-1 text-start">
+            <span className="block text-[13px] font-bold text-ink">{t("wallet.title")}</span>
+            <span className="block text-[11.5px] font-medium text-muted">{t("wallet.subtitle")}</span>
+          </span>
+          <span className="text-muted">{dir === "rtl" ? "‹" : "›"}</span>
+        </button>
 
         <button onClick={async () => { if (confirm(t("profile.logoutConfirm"))) { await logout(); router.replace("/"); } }}
           className="mt-2 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-red-200 bg-red-50 py-3.5 text-[15px] font-bold text-red-600 active:scale-[0.99]">
