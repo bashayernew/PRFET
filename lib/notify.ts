@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { prisma } from "@/lib/prisma";
+import { pushToUser } from "@/lib/fcm";
 
 let configured = false;
 function ensure() {
@@ -76,8 +77,7 @@ export async function notify(userId: string, kind: string, opts: NotifyOpts = {}
     .create({ data: { userId, kind, data: text, actorId, targetId } })
     .catch(() => {});
 
-  if (!ensure()) return;
-
+  // Recipient locale + the actor's name — needed for BOTH the native (FCM) and web pushes.
   const [me, actor] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { locale: true } }).catch(() => null),
     actorId ? prisma.user.findUnique({ where: { id: actorId }, select: { displayName: true, avatarUrl: true } }).catch(() => null) : null,
@@ -87,13 +87,15 @@ export async function notify(userId: string, kind: string, opts: NotifyOpts = {}
   // Absolute URL on the live domain, so a click always lands on prfet.com even for
   // push subscriptions that were first created on the old domain.
   const appOrigin = (process.env.APP_URL || "https://prfet.com").replace(/\/$/, "");
-  const payload = JSON.stringify({
-    kind,
-    title,
-    body,
-    url: appOrigin + linkFor(kind, targetId, actorId),
-    icon: actor?.avatarUrl || "/icon-192.png",
-  });
+  const url = appOrigin + linkFor(kind, targetId, actorId);
+
+  // Native phone push (reaches the installed app even when it's CLOSED). Safe no-op until
+  // Firebase is configured. This is separate from web-push below, so it works regardless of VAPID.
+  await pushToUser(userId, { title, body, url, icon: actor?.avatarUrl });
+
+  // Web push (browsers / installed PWA) — only when VAPID keys are set.
+  if (!ensure()) return;
+  const payload = JSON.stringify({ kind, title, body, url, icon: actor?.avatarUrl || "/icon-192.png" });
 
   const subs = await prisma.pushSubscription.findMany({ where: { userId } });
   await Promise.all(

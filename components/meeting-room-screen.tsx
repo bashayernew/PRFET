@@ -157,6 +157,29 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     return () => { dead = true; room?.disconnect(); roomRef.current = null; };
   }, [ready, id, access]);
 
+  // Keep the phone screen ON while in a live room — both the host broadcasting and anyone
+  // watching. Without this the screen dims/locks mid-live and the stream drops. Browsers
+  // release the lock when the tab is hidden, so we re-acquire it whenever the screen returns.
+  useEffect(() => {
+    if (!ready || (access !== "member" && access !== "host")) return;
+    let sentinel: { release?: () => Promise<void> } | null = null;
+    const acquire = async () => {
+      try {
+        const nav = navigator as Navigator & { wakeLock?: { request: (t: string) => Promise<{ release?: () => Promise<void> }> } };
+        if (nav.wakeLock && document.visibilityState === "visible") {
+          sentinel = await nav.wakeLock.request("screen");
+        }
+      } catch { /* wake lock unsupported or denied — harmless */ }
+    };
+    const onVis = () => { if (document.visibilityState === "visible") acquire(); };
+    acquire();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      try { sentinel?.release?.(); } catch {}
+    };
+  }, [ready, id, access]);
+
   useEffect(() => {
     if (!ready || !noRecording) return;
     setSecureScreen(true);

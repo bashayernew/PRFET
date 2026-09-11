@@ -6,12 +6,7 @@ function getRefresh() {
 
 let refreshing: Promise<string | null> | null = null;
 
-/**
- * Exchange the refresh token for a fresh access token (deduped across concurrent calls).
- * Exported as `refreshAccessToken` below so the socket layer can re-authenticate too —
- * access tokens live 15 minutes, and a socket that reconnects with a stale one is
- * rejected, which silently kills calls and live chat.
- */
+/** Exchange the refresh token for a fresh access token (deduped across concurrent calls). */
 async function refreshAccess(): Promise<string | null> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
@@ -44,35 +39,13 @@ async function refreshAccess(): Promise<string | null> {
   return r;
 }
 
-/** Public alias so non-fetch callers (the Socket.IO layer) can refresh the token too. */
-export const refreshAccessToken = refreshAccess;
-
 const NO_REFRESH = ["/api/auth/refresh", "/api/auth/login", "/api/auth/register", "/api/auth/verify-otp", "/api/auth/resend-otp", "/api/auth/forgot", "/api/auth/reset"];
-
-/**
- * "ios" / "android" inside the Capacitor shell, "" in a browser.
- *
- * Capacitor injects this global synchronously before app code runs, so no dynamic import
- * is needed and the web bundle stays free of native modules. The server reads it to decide
- * whether App Store payment rules apply to a purchase (see `lib/credits.ts`).
- */
-function platformHeader(): string {
-  if (typeof window === "undefined") return "";
-  const cap = (window as unknown as {
-    Capacitor?: { getPlatform?: () => string; isNativePlatform?: () => boolean };
-  }).Capacitor;
-  if (!cap?.isNativePlatform?.()) return "";
-  const p = cap.getPlatform?.() || "";
-  return p === "ios" || p === "android" ? p : "";
-}
 
 async function request<T = unknown>(method: string, path: string, body?: unknown, token?: string): Promise<ApiResult<T>> {
   const doFetch = (tok?: string) => {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers["Content-Type"] = "application/json";
     if (tok) headers["Authorization"] = `Bearer ${tok}`;
-    const platform = platformHeader();
-    if (platform) headers["x-prfet-platform"] = platform;
     return fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
   };
 

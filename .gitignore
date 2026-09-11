@@ -30,3 +30,8 @@ local-env-copy-to-dotenv.txt
 
 # clone leftovers — safe to delete
 _to_delete/
+
+# Firebase — never commit these
+google-services.json
+android/app/google-services.json
+*firebase-adminsdk*.json

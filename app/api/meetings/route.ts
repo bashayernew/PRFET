@@ -118,6 +118,22 @@ export async function POST(req: Request) {
       },
     },
   });
+  // Tell the host's followers they've gone live: a stored notification (shows in their
+  // activity list and the badge count) plus a live socket ping so anyone currently in the
+  // app sees it right away. Hidden rooms are private and never announce.
+  if (d.privacy !== "hidden") {
+    const followers = await prisma.follow.findMany({ where: { targetId: payload.sub }, select: { userId: true } });
+    if (followers.length) {
+      await prisma.notification
+        .createMany({ data: followers.map((f) => ({ userId: f.userId, kind: "went_live", data: meeting.title, actorId: payload.sub, targetId: meeting.id })) })
+        .catch(() => {});
+      try {
+        const io = (globalThis as unknown as { __herotIo?: { to: (r: string) => { emit: (e: string, p: unknown) => void } } }).__herotIo;
+        if (io) followers.forEach((f) => io.to(f.userId).emit("user:live", { hostId: payload.sub, meetingId: meeting.id, title: meeting.title }));
+      } catch { /* socket optional — the stored notification is the reliable path */ }
+    }
+  }
+
   // Notify invited users (deduped, host excluded).
   if (d.inviteIds?.length) {
     const inviteIds = [...new Set(d.inviteIds)].filter((uid) => uid !== payload.sub).slice(0, 20);

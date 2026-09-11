@@ -33,6 +33,7 @@ import MediaViewer from "@/components/media-viewer";
 import CommentsSheet from "@/components/comments-sheet";
 import ShareSheet from "@/components/share-sheet";
 import { enablePush } from "@/lib/push-client";
+import { registerNativePush } from "@/lib/native-push";
 
 type Me = { displayName: string; accountType: string; country: string | null; browseCountries: string; shareLocation: boolean; avatarUrl: string | null; isPremium: boolean; isAdmin?: boolean; hideTop?: boolean; social1?: string | null; social2?: string | null; social3?: string | null };
 type StoryUser = { id: string; displayName: string; avatarUrl: string | null; category: string | null };
@@ -80,7 +81,8 @@ export default function HomeScreen() {
     if (!ready) return;
     const token = getAccessToken();
     if (!token) return;
-    enablePush(token);
+    enablePush(token);            // browsers / installed PWA (web-push)
+    registerNativePush(token);    // installed app (native FCM — reaches the phone when closed)
     apiGet<{ user: Me }>("/api/auth/me", token).then((res) => {
       if (res.ok && res.data?.user) {
         setMe(res.data.user);

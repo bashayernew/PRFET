@@ -47,7 +47,10 @@ export async function POST(req: Request) {
   const cap = await aiCapCheck(g.userId, "video");
   if (!cap.allowed) return NextResponse.json({ error: "limit_reached", cap: cap.cap, used: cap.used }, { status: 429 });
 
-  const r = await geminiVideoStart(parsed.data.prompt.trim());
+  // Steer the model toward a usable clip: models sometimes return sideways/upside-down or
+  // glitchy frames. These hints cut down the "scrambled / opposite orientation" results.
+  const guided = `${parsed.data.prompt.trim()}. Vertical 9:16 portrait orientation, upright and correctly oriented (not rotated, mirrored, or upside down), smooth coherent natural motion, clean high quality, no distortion, warping, or scrambled frames.`;
+  const r = await geminiVideoStart(guided);
   if (!r.ok) {
     const status = r.error === "quota" ? 429 : r.error === "not_configured" ? 503 : 502;
     return NextResponse.json({ error: r.error }, { status });

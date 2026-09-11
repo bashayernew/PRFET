@@ -48,6 +48,13 @@
   --color-slate-900: #f5f1ff;
 }
 
+/* The app is a fixed-width mobile column. Never let a stray wide element make the whole
+   page scroll sideways or render "wider than the phone" — clip any horizontal overflow. */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 /* ---- surface + text fixes the token swap alone can't express ---- */
 
 /* Cards use `bg-white`; headers use `bg-white/15` for glass. Only the SOLID one becomes

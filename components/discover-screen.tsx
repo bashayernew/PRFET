@@ -368,6 +368,11 @@ export default function DiscoverScreen() {
                       <p className="truncate text-[15px] font-extrabold text-ink" style={vipStyle(u)}>{u.displayName}</p>
                       {u.category && <p className="text-[12px] font-medium text-muted">{t(u.category)}</p>}
                       <div className="mt-1 flex items-center gap-2.5">
+                        {u.live && (
+                          <span className="flex items-center gap-1 rounded-full bg-red-500 px-2 py-0.5 text-[10.5px] font-extrabold text-white">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> LIVE
+                          </span>
+                        )}
                         <span className={`flex items-center gap-1 text-[11.5px] font-bold ${u.online ? "text-emerald-600" : "text-muted"}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${u.online ? "bg-emerald-500" : "bg-slate-300"}`} />
                           {u.online ? t("home.online") : t("home.offline")}

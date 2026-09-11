@@ -143,7 +143,16 @@ app.prepare().then(() => {
 
     // WebRTC signaling relay for 1:1 calls (offer/answer/ICE) — used by the calls feature.
     socket.on("call:signal", (p) => {
-      if (p && p.to) io.to(p.to).emit("call:signal", { from: uid, ...p });
+      if (p && p.to) {
+        // Diagnostic: on an offer, log whether the callee actually has a live socket. If
+        // "targets: 0" the callee isn't connected (root cause of silent missed calls); if
+        // >0 but they still don't ring, the break is on the callee's client.
+        if (p.type === "offer") {
+          const room = io.sockets.adapter.rooms.get(p.to);
+          console.log(`[call] offer ${uid} -> ${p.to} | callee sockets: ${room ? room.size : 0}`);
+        }
+        io.to(p.to).emit("call:signal", { from: uid, ...p });
+      }
     });
 
     socket.on("disconnect", () => {

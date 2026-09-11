@@ -18,6 +18,7 @@ const META: Record<string, { icon: typeof Bell; titleKey: string; bodyKey: strin
   new_follower: { icon: UserPlus, titleKey: "notif.followerTitle", bodyKey: "notif.followerBody", tint: "bg-emerald-500" },
   new_message: { icon: MessageCircle, titleKey: "notif.msgTitle", bodyKey: "notif.msgBody", tint: "bg-brand-500" },
   meeting_invite: { icon: Video, titleKey: "notif.meetTitle", bodyKey: "notif.meetBody", tint: "bg-violet-500" },
+  went_live: { icon: Video, titleKey: "notif.liveTitle", bodyKey: "notif.liveBody", tint: "bg-red-500" },
   post_like: { icon: Heart, titleKey: "notif.likeTitle", bodyKey: "notif.likeBody", tint: "bg-rose-500" },
   post_comment: { icon: MessageCircle, titleKey: "notif.commentTitle", bodyKey: "notif.commentBody", tint: "bg-sky-500" },
   post_repost: { icon: Repeat2, titleKey: "notif.repostTitle", bodyKey: "notif.repostBody", tint: "bg-emerald-500" },
@@ -55,6 +56,7 @@ function sentence(n: Notif, t: (k: string) => string) {
     case "post_comment": return fill("notif.commentBy");
     case "post_repost": return fill("notif.repostBy");
     case "meeting_invite": return fill("notif.meetBy");
+    case "went_live": return fill("notif.liveBy");
     case "ad_review": return text ? `${t("notif.adBody")} — “${text}”` : t("notif.adBody");
     case "missed_call": return fill("notif.missedBy");
     case "job_application": return fill("notif.jobBy");

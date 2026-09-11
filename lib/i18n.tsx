@@ -583,6 +583,7 @@ const ar: Dict = {
   "notif.commentBy": "{name} علّق على منشورك: {text}",
   "notif.repostBy": "{name} أعاد نشر منشورك",
   "notif.meetBy": "{name} دعاك إلى غرفة «{text}»",
+  "notif.liveBy": "{name} بدأ بثاً مباشراً «{text}»",
 
   "chat.locFinding": "جارٍ تحديد موقعك…",
   "chat.locDenied": "لم يُسمح بالوصول إلى الموقع. فعّله من إعدادات المتصفح.",
@@ -972,6 +973,8 @@ const ar: Dict = {
   "meet.invitePeople": "ادعُ أشخاصًا تتابعهم",
   "notif.meetTitle": "دعوة إلى غرفة",
   "notif.meetBody": "تمت دعوتك للانضمام إلى غرفة مباشرة — اضغط للدخول",
+  "notif.liveTitle": "بث مباشر الآن",
+  "notif.liveBody": "بدأ شخص تتابعه بثاً مباشراً — اضغط للمشاهدة",
   "posts.add": "منشور جديد",
   "posts.posted": "تم نشر المنشور ✅",
   "follows.title": "المتابعات",
@@ -1879,6 +1882,7 @@ const en: Dict = {
   "notif.commentBy": "{name} commented on your post: {text}",
   "notif.repostBy": "{name} reposted your post",
   "notif.meetBy": "{name} invited you to “{text}”",
+  "notif.liveBy": "{name} started a live “{text}”",
 
   "chat.locFinding": "Finding your location…",
   "chat.locDenied": "Location permission denied. Enable it in your browser settings.",
@@ -2268,6 +2272,8 @@ const en: Dict = {
   "meet.invitePeople": "Invite people you follow",
   "notif.meetTitle": "Room invite",
   "notif.meetBody": "You were invited to join a live room — tap to enter",
+  "notif.liveTitle": "Live now",
+  "notif.liveBody": "Someone you follow started a live — tap to watch",
   "posts.add": "New post",
   "posts.posted": "Your post is live ✅",
   "follows.title": "Connections",

@@ -39,7 +39,9 @@ export async function GET(req: Request) {
     where: {
       ...(scope === "all" ? {} : scope === "people" ? { accountType: "personal" } : { accountType: "business" }),
       visibility: "public",
-      ...(countries.length ? { country: { in: countries } } : {}),
+      // A name search should find anyone by that name, so the country filter is bypassed
+      // when q is present (distance filtering below is likewise skipped for name searches).
+      ...(countries.length && !q ? { country: { in: countries } } : {}),
       ...(q ? { displayName: { contains: q, mode: "insensitive" } } : {}),
     },
     orderBy: sort === "views" ? { profileViews: "desc" } : { rating: "desc" },
@@ -54,6 +56,13 @@ export async function GET(req: Request) {
   ]);
   const followerOf = new Map(followerGroups.map((g) => [g.targetId, g._count.targetId]));
   const followingOf = new Map(followingGroups.map((g) => [g.userId, g._count.userId]));
+
+  // Who is currently live (hosting a room right now) — so the UI can show a LIVE badge.
+  const liveHosts = await prisma.meeting.findMany({
+    where: { hostId: { in: ids }, status: "live" },
+    select: { hostId: true },
+  }).catch(() => []);
+  const liveSet = new Set(liveHosts.map((m) => m.hostId));
 
   const list = users.map((u) => {
     // 3 decimals = metre precision, so "right next to me" really means metres.
@@ -79,12 +88,15 @@ export async function GET(req: Request) {
       profileViews: u.profileViews,
       followers: followerOf.get(u.id) ?? 0,
       following: followingOf.get(u.id) ?? 0,
+      live: liveSet.has(u.id),
     };
   });
 
   // A narrowed slider means "only people I KNOW are this close" — unknown locations drop out.
   // At the full 100 km range we keep unknowns, so the list never looks needlessly empty.
-  const filtered = maxKm != null
+  // Distance filtering applies to browsing by proximity, NOT to a name search — a name
+  // search should surface the person wherever they are.
+  const filtered = (maxKm != null && !q)
     ? list.filter((u) => (u.dist == null ? maxKm >= 100 : parseFloat(u.dist) <= maxKm))
     : list;
 

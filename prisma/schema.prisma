@@ -136,6 +136,7 @@ model User {
   applications  JobApplication[]
   tickets       SupportTicket[]
   pushSubs      PushSubscription[]
+  deviceTokens  DeviceToken[]
   profileViewsMade  ProfileView[] @relation("ProfileViewsMade")
   profileViewsGot   ProfileView[] @relation("ProfileViewsGot")
   aiMessages        AiMessage[]   @relation("AiMessages")
@@ -559,6 +560,21 @@ model PushSubscription {
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// A native-app device's FCM token — how we push to the phone when the app is CLOSED
+/// (a WebView can't run a background service worker, so web-push can't reach it). One row
+/// per device; the same user may have several. Sent to via firebase-admin (see lib/fcm.ts).
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String   @default("android") // android | ios
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
