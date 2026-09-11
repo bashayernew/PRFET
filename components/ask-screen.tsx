@@ -191,6 +191,8 @@ export default function AskScreen() {
   const Back = dir === "rtl" ? ArrowRight : ArrowLeft;
 
   const [messages, setMessages] = useState<Msg[]>([]);
+  const bleCodeRef = useRef<string>("");   // my own Bluetooth broadcast code
+  const bleSearchRef = useRef(false);      // a scan is already running
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<Status>(null);
@@ -692,8 +694,13 @@ export default function AskScreen() {
     }, token);
     setSending(false);
     if (res.ok && res.data?.reply) {
-      setMessages((m) => [...m, res.data.reply as Msg]);
+      const reply = res.data.reply as Msg;
+      // The assistant can ask us to run a real Bluetooth scan via a hidden directive token.
+      const bm = reply.body.match(/\[\[BLE_SEARCH:(business|individual|both)\]\]/i);
+      if (bm) reply.body = reply.body.replace(bm[0], "").trim();
+      setMessages((m) => [...m, reply]);
       refreshUsage();
+      if (bm) runBleSearch(bm[1].toLowerCase() as "business" | "individual" | "both");
     } else {
       const e = res.data?.error;
       // A free member hitting the paywall gets the subscribe screen, not an error line.
@@ -701,6 +708,61 @@ export default function AskScreen() {
       if (e === "msg_limit") { setCapHit("messages"); refreshUsage(); return; }
       setErr(e === "rate_limited" || e === "quota" ? t("ask.quota") : t("ask.error"));
     }
+  }
+
+  /**
+   * Run a REAL Bluetooth scan when the assistant asks for one (via the [[BLE_SEARCH:type]]
+   * directive). It's a paid feature metered against the subscriber "radar minutes"; only the
+   * installed app has the radio. Scans ~12s, then lists whoever it found, filtered by type.
+   */
+  async function runBleSearch(type: "business" | "individual" | "both") {
+    if (bleSearchRef.current) return;
+    const token = getAccessToken() || undefined;
+    const nativeObj = (window as unknown as { PrfetNative?: { bleStart?: (c?: string) => void; bleStop?: () => void } }).PrfetNative;
+    if (!nativeObj?.bleStart) {
+      setMessages((m) => [...m, { id: `ble-${Date.now()}`, role: "model", body: t("ask.bleAppOnly") }]);
+      return;
+    }
+    // Charge the radar minutes and gate on subscription / remaining minutes.
+    const gate = await apiPost<{ error?: string }>("/api/search/ble-tick", { seconds: 15 }, token);
+    if (gate.status === 403) {
+      if (gate.data?.error === "radar_limit") setMessages((m) => [...m, { id: `ble-${Date.now()}`, role: "model", body: t("ask.bleLimit") }]);
+      else setStatus("premium_only");
+      return;
+    }
+    bleSearchRef.current = true;
+
+    let code = bleCodeRef.current;
+    if (!code) {
+      const r = await apiGet<{ code: string }>("/api/search/ble-self", token);
+      if (r.ok && r.data?.code) { code = r.data.code; bleCodeRef.current = code; }
+    }
+
+    const searchingId = `ble-${Date.now()}`;
+    setMessages((m) => [...m, { id: searchingId, role: "model", body: t("ask.bleSearching") }]);
+
+    type Found = { id: string; displayName: string; accountType: string; distance: number | null };
+    const found = new Map<string, Found>();
+    (window as unknown as { __prfetBleFound?: (a: { id: string; distance?: number }[]) => void }).__prfetBleFound = async (arr) => {
+      const res = await apiPost<{ people: Found[] }>("/api/search/ble-discovered", { found: arr }, token);
+      if (res.ok && res.data?.people) for (const p of res.data.people) found.set(p.id, p);
+    };
+    try { nativeObj.bleStart(code || ""); } catch { /* ignore */ }
+    await new Promise((r) => setTimeout(r, 12000)); // scan window
+    try { nativeObj.bleStop?.(); } catch { /* ignore */ }
+    (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
+    bleSearchRef.current = false;
+
+    let people = [...found.values()];
+    if (type === "business") people = people.filter((p) => p.accountType === "business");
+    else if (type === "individual") people = people.filter((p) => p.accountType === "personal");
+    people.sort((a, b) => (a.distance ?? 1e9) - (b.distance ?? 1e9));
+
+    const body = people.length === 0
+      ? t("ask.bleNone")
+      : `${t("ask.bleFound")}\n` + people.slice(0, 20).map((p) => `• ${p.displayName}${p.distance != null ? ` — ${p.distance}m` : ""}`).join("\n");
+    setMessages((m) => m.map((x) => (x.id === searchingId ? { ...x, body } : x)));
+    refreshUsage();
   }
 
   // Attach a photo to SEND to the AI so it can see it — multimodal vision (#9). Separate from

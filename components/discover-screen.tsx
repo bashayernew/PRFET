@@ -81,6 +81,28 @@ export default function DiscoverScreen() {
     (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
   }, []);
 
+  // While a Bluetooth scan or radar is running, keep the phone screen ON so the device
+  // doesn't sleep and suspend scanning — even if the user isn't touching or scrolling.
+  // Releases automatically the moment both are switched off. Re-acquires when the screen
+  // comes back (browsers drop the lock when hidden).
+  useEffect(() => {
+    if (!bleOn && !radarOn) return;
+    let sentinel: { release?: () => Promise<void> } | null = null;
+    const acquire = async () => {
+      try {
+        const nav = navigator as Navigator & { wakeLock?: { request: (t: string) => Promise<{ release?: () => Promise<void> }> } };
+        if (nav.wakeLock && document.visibilityState === "visible") sentinel = await nav.wakeLock.request("screen");
+      } catch { /* unsupported — harmless */ }
+    };
+    const onVis = () => { if (document.visibilityState === "visible") acquire(); };
+    acquire();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      try { sentinel?.release?.(); } catch { /* already released */ }
+    };
+  }, [bleOn, radarOn]);
+
   // --- AI Bluetooth Radar (premium) ------------------------------------------------------
   // Unlike the manual scan, radar keeps running and PERSISTS everyone it catches into a report
   // that survives even after they leave. It shares the one radio with the manual scan, meters
