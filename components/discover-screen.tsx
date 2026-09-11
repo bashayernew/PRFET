@@ -81,10 +81,21 @@ export default function DiscoverScreen() {
     (window as unknown as { __prfetBleFound?: unknown }).__prfetBleFound = undefined;
   }, []);
 
+  // --- AI Bluetooth Radar (premium) ------------------------------------------------------
+  // Unlike the manual scan, radar keeps running and PERSISTS everyone it catches into a report
+  // that survives even after they leave. It shares the one radio with the manual scan, meters
+  // its runtime against the monthly "radar minutes" cap, and is subscriber-gated.
+  type RadarPerson = BlePerson & { firstSeen: string; lastSeen: string };
+  const [radarOn, setRadarOn] = useState(false);
+  const [radarPeople, setRadarPeople] = useState<RadarPerson[]>([]);
+  const [radarGate, setRadarGate] = useState<null | "premium" | "limit">(null);
+  const radarTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // While a Bluetooth scan or radar is running, keep the phone screen ON so the device
   // doesn't sleep and suspend scanning — even if the user isn't touching or scrolling.
   // Releases automatically the moment both are switched off. Re-acquires when the screen
-  // comes back (browsers drop the lock when hidden).
+  // comes back (browsers drop the lock when hidden). (Declared here, AFTER bleOn/radarOn,
+  // so the dependency array never references them before initialization.)
   useEffect(() => {
     if (!bleOn && !radarOn) return;
     let sentinel: { release?: () => Promise<void> } | null = null;
@@ -102,16 +113,6 @@ export default function DiscoverScreen() {
       try { sentinel?.release?.(); } catch { /* already released */ }
     };
   }, [bleOn, radarOn]);
-
-  // --- AI Bluetooth Radar (premium) ------------------------------------------------------
-  // Unlike the manual scan, radar keeps running and PERSISTS everyone it catches into a report
-  // that survives even after they leave. It shares the one radio with the manual scan, meters
-  // its runtime against the monthly "radar minutes" cap, and is subscriber-gated.
-  type RadarPerson = BlePerson & { firstSeen: string; lastSeen: string };
-  const [radarOn, setRadarOn] = useState(false);
-  const [radarPeople, setRadarPeople] = useState<RadarPerson[]>([]);
-  const [radarGate, setRadarGate] = useState<null | "premium" | "limit">(null);
-  const radarTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function stopRadar() {
     const native = (window as unknown as { PrfetNative?: { bleStop?: () => void } }).PrfetNative;
