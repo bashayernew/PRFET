@@ -29,27 +29,33 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
-  const distById = new Map<string, number | undefined>();
-  for (const f of parsed.data.found) if (f.id !== payload.sub) distById.set(f.id, f.distance);
-  const ids = [...distById.keys()];
-  if (ids.length === 0) return NextResponse.json({ people: [] });
+  // The `id` in each found item is now the over-the-air BLE code, not a user id.
+  const distByCode = new Map<string, number | undefined>();
+  for (const f of parsed.data.found) distByCode.set(f.id, f.distance);
+  const codes = [...distByCode.keys()];
+  if (codes.length === 0) return NextResponse.json({ people: [] });
 
-  // Only surface people who opted in to Bluetooth discovery and aren't hidden/blocking us.
-  const [users, blockedRows] = await Promise.all([
-    prisma.user.findMany({
-      where: { id: { in: ids }, bleDiscoverable: true, visibility: "public" },
-      select: {
-        id: true, displayName: true, avatarUrl: true, category: true, accountType: true,
-        isPremium: true, premiumUntil: true, autoRenew: true, isAdmin: true, textColor: true,
-      },
-    }),
-    prisma.block.findMany({ where: { OR: [{ userId: payload.sub, targetId: { in: ids } }, { userId: { in: ids }, targetId: payload.sub }] }, select: { userId: true, targetId: true } }).catch(() => []),
-  ]);
+  // Resolve codes → users who opted in to Bluetooth discovery.
+  const users = await prisma.user.findMany({
+    where: { bleCode: { in: codes }, bleDiscoverable: true, visibility: "public" },
+    select: {
+      id: true, bleCode: true, displayName: true, avatarUrl: true, category: true, accountType: true,
+      isPremium: true, premiumUntil: true, autoRenew: true, isAdmin: true, textColor: true,
+    },
+  }).catch(() => []);
+  const others = users.filter((u) => u.id !== payload.sub);
+  if (others.length === 0) return NextResponse.json({ people: [] });
 
+  // Drop anyone in a block relationship with the viewer (either direction).
+  const otherIds = others.map((u) => u.id);
+  const blockedRows = await prisma.block.findMany({
+    where: { OR: [{ userId: payload.sub, targetId: { in: otherIds } }, { userId: { in: otherIds }, targetId: payload.sub }] },
+    select: { userId: true, targetId: true },
+  }).catch(() => []);
   const blocked = new Set<string>();
   for (const b of blockedRows) { blocked.add(b.userId === payload.sub ? b.targetId : b.userId); }
 
-  const people = users
+  const people = others
     .filter((u) => !blocked.has(u.id))
     .map((u) => {
       const effPremium = u.isPremium && !premiumLapsed(u);
@@ -61,7 +67,7 @@ export async function POST(req: Request) {
         accountType: u.accountType,
         isPremium: effPremium,
         textColor: effPremium ? u.textColor : null,
-        distance: distById.get(u.id) ?? null,
+        distance: (u.bleCode ? distByCode.get(u.bleCode) : undefined) ?? null,
       };
     })
     .sort((a, b) => (a.distance ?? 1e9) - (b.distance ?? 1e9));

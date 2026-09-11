@@ -31,27 +31,28 @@ async function requirePremium(userId: string): Promise<boolean> {
 async function report(meId: string) {
   const hits = await prisma.radarHit.findMany({ where: { userId: meId }, orderBy: { lastSeen: "desc" }, take: 500 });
   if (hits.length === 0) return [];
-  const ids = hits.map((h) => h.foundId);
-  const [users, blockedRows] = await Promise.all([
-    prisma.user.findMany({
-      where: { id: { in: ids }, bleDiscoverable: true, visibility: "public" },
-      select: {
-        id: true, displayName: true, avatarUrl: true, category: true, accountType: true,
-        isPremium: true, premiumUntil: true, autoRenew: true, isAdmin: true, textColor: true,
-      },
-    }),
-    prisma.block.findMany({
-      where: { OR: [{ userId: meId, targetId: { in: ids } }, { userId: { in: ids }, targetId: meId }] },
-      select: { userId: true, targetId: true },
-    }).catch(() => []),
-  ]);
+  const codes = hits.map((h) => h.foundId); // foundId holds the over-the-air BLE code
+  const users = await prisma.user.findMany({
+    where: { bleCode: { in: codes }, bleDiscoverable: true, visibility: "public" },
+    select: {
+      id: true, bleCode: true, displayName: true, avatarUrl: true, category: true, accountType: true,
+      isPremium: true, premiumUntil: true, autoRenew: true, isAdmin: true, textColor: true,
+    },
+  }).catch(() => []);
+  const others = users.filter((u) => u.id !== meId);
+  if (others.length === 0) return [];
+  const otherIds = others.map((u) => u.id);
+  const blockedRows = await prisma.block.findMany({
+    where: { OR: [{ userId: meId, targetId: { in: otherIds } }, { userId: { in: otherIds }, targetId: meId }] },
+    select: { userId: true, targetId: true },
+  }).catch(() => []);
   const blocked = new Set<string>();
   for (const b of blockedRows) blocked.add(b.userId === meId ? b.targetId : b.userId);
-  const byId = new Map(hits.map((h) => [h.foundId, h]));
-  return users
+  const hitByCode = new Map(hits.map((h) => [h.foundId, h]));
+  return others
     .filter((u) => !blocked.has(u.id))
     .map((u) => {
-      const h = byId.get(u.id)!;
+      const h = u.bleCode ? hitByCode.get(u.bleCode) : undefined;
       const effPremium = u.isPremium && !premiumLapsed(u as never);
       return {
         id: u.id,
@@ -61,9 +62,9 @@ async function report(meId: string) {
         accountType: u.accountType,
         isPremium: effPremium,
         textColor: effPremium ? u.textColor : null,
-        distance: h.distance ?? null,
-        firstSeen: h.firstSeen.toISOString(),
-        lastSeen: h.lastSeen.toISOString(),
+        distance: h?.distance ?? null,
+        firstSeen: (h?.firstSeen ?? new Date()).toISOString(),
+        lastSeen: (h?.lastSeen ?? new Date()).toISOString(),
       };
     })
     .sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());

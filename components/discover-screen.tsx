@@ -50,8 +50,17 @@ export default function DiscoverScreen() {
   const [blePeople, setBlePeople] = useState<BlePerson[]>([]);
   const [bleUnsupported, setBleUnsupported] = useState(false);
 
+  // My own over-the-air Bluetooth code — fetched once, then broadcast so nearby phones find me.
+  const bleCodeRef = useRef<string>("");
+  useEffect(() => {
+    if (!ready) return;
+    apiGet<{ code: string }>("/api/search/ble-self", getAccessToken() || undefined)
+      .then((r) => { if (r.ok && r.data?.code) bleCodeRef.current = r.data.code; })
+      .catch(() => {});
+  }, [ready]);
+
   function toggleBle() {
-    const native = (window as unknown as { PrfetNative?: { bleStart?: () => void; bleStop?: () => void } }).PrfetNative;
+    const native = (window as unknown as { PrfetNative?: { bleStart?: (code?: string) => void; bleStop?: () => void } }).PrfetNative;
     if (!native?.bleStart) { setBleUnsupported(true); return; }
     const w = window as unknown as { __prfetBleFound?: (arr: { id: string; distance?: number }[]) => void };
     if (bleOn) { native.bleStop?.(); w.__prfetBleFound = undefined; setBleOn(false); return; }
@@ -61,7 +70,7 @@ export default function DiscoverScreen() {
       if (res.ok && res.data?.people) setBlePeople(res.data.people);
     };
     setBlePeople([]);
-    native.bleStart();
+    native.bleStart(bleCodeRef.current);
     setBleOn(true);
   }
 
@@ -92,7 +101,7 @@ export default function DiscoverScreen() {
 
   function toggleRadar() {
     if (radarOn) { stopRadar(); return; }
-    const native = (window as unknown as { PrfetNative?: { bleStart?: () => void; bleStop?: () => void } }).PrfetNative;
+    const native = (window as unknown as { PrfetNative?: { bleStart?: (code?: string) => void; bleStop?: () => void } }).PrfetNative;
     if (!native?.bleStart) { setBleUnsupported(true); return; }
     if (bleOn) { native.bleStop?.(); setBleOn(false); } // share the one radio
     setRadarGate(null);
@@ -103,7 +112,7 @@ export default function DiscoverScreen() {
       if (res.status === 403) { setRadarGate("premium"); stopRadar(); return; }
       if (res.ok && res.data?.people) setRadarPeople(res.data.people);
     };
-    native.bleStart();
+    native.bleStart(bleCodeRef.current);
     setRadarOn(true);
     // Heartbeat: charge the monthly radar-minutes cap for the time it runs.
     radarTimer.current = setInterval(async () => {
