@@ -50,6 +50,7 @@ export default function HomeScreen() {
   const [dirUsers, setDirUsers] = useState<{ id: string; displayName: string; category: string | null }[] | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [liveRooms, setLiveRooms] = useState<{ id: string; title: string; host: string; hostId: string; hostAvatar: string | null }[]>([]);
   const [viewerAt, setViewerAt] = useState<number | null>(null); // index into posts for the fullscreen viewer
   const [comments, setComments] = useState<FeedPost | null>(null);
   const [share, setShare] = useState<FeedPost | null>(null);
@@ -76,6 +77,21 @@ export default function HomeScreen() {
     const n = localStorage.getItem("herot.name");
     if (n) setName(n);
   }, []);
+
+  // "Live now" — rooms visible to me (people I follow + public) that are broadcasting right
+  // now. Polls every 30s so a newly-started live appears at the top of home without a reload.
+  useEffect(() => {
+    if (!ready) return;
+    const token = getAccessToken() || undefined;
+    const load = () => {
+      apiGet<{ meetings: { id: string; title: string; host: string; hostId: string; hostAvatar: string | null }[] }>("/api/meetings", token)
+        .then((r) => { if (r.ok && r.data?.meetings) setLiveRooms(r.data.meetings); })
+        .catch(() => {});
+    };
+    load();
+    const iv = setInterval(load, 30000);
+    return () => clearInterval(iv);
+  }, [ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -258,6 +274,36 @@ export default function HomeScreen() {
           <StripCard icon={<Video className="h-5 w-5" />} tint="bg-violet-50 text-violet-600" label={t("home.boxMeetings")} onClick={() => router.push("/meetings")} />
           <StripCard icon={<Search className="h-5 w-5" />} tint="bg-sky-50 text-sky-600" label={t("home.boxSearch")} onClick={() => router.push("/discover")} />
         </div>
+
+        {/* Live now — people I follow (and public rooms) broadcasting right this moment */}
+        {liveRooms.length > 0 && (
+          <div className="mt-7">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              <h2 className="text-[16px] font-extrabold text-ink">{t("home.liveNow")}</h2>
+            </div>
+            <div className="no-scrollbar -mx-5 flex gap-3.5 overflow-x-auto px-5 pb-1">
+              {liveRooms.map((r) => (
+                <button key={r.id} onClick={() => router.push(`/meetings/${r.id}`)} className="flex shrink-0 flex-col items-center gap-1.5">
+                  <span className="relative rounded-full bg-gradient-to-tr from-red-500 to-rose-500 p-[2.5px]">
+                    <span className="grid place-items-center rounded-full bg-slate-50 p-[2.5px]">
+                      <span className="grid h-[54px] w-[54px] place-items-center overflow-hidden rounded-full bg-brand-50">
+                        {r.hostAvatar ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={r.hostAvatar} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-[18px] font-extrabold text-brand-600">{(r.host || "•").charAt(0).toUpperCase()}</span>
+                        )}
+                      </span>
+                    </span>
+                    <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 rounded-full bg-red-500 px-1.5 text-[8.5px] font-extrabold text-white ring-2 ring-slate-50">LIVE</span>
+                  </span>
+                  <span className="w-16 truncate text-center text-[11px] font-bold text-ink/80">{r.host}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* stories */}
         <div className="mb-2 mt-7 flex items-center justify-between">
