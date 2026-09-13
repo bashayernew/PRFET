@@ -525,7 +525,7 @@ export default function MerchantScreen({ id, sponsor = false }: { id: string; sp
                 <button key={p.id} onClick={() => router.push(`/post/${p.id}`)} className="relative aspect-square overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-100 active:scale-95">
                   {p.kind === "video" ? (
                     <>
-                      <video src={p.mediaUrl} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+                      <video src={`${p.mediaUrl}#t=0.1`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
                       <span className="absolute inset-0 grid place-items-center"><Play className="h-7 w-7 fill-white text-white drop-shadow" /></span>
                       <span className="absolute bottom-1.5 start-1.5 rounded-md bg-black/40 px-1.5 py-0.5 text-[9px] font-bold text-white">{t("merchant.video")}</span>
                     </>

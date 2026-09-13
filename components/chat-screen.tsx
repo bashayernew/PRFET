@@ -696,7 +696,7 @@ function SharedPost({ id, note, t }: { id: string; note: string; t: (k: string) 
       {post ? (
         <>
           {post.kind === "video" ? (
-            <video src={post.mediaUrl} muted playsInline preload="metadata" className="h-36 w-full bg-black object-cover" />
+            <video src={`${post.mediaUrl}#t=0.1`} muted playsInline preload="metadata" className="h-36 w-full bg-black object-cover" />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={post.mediaUrl} alt="" className="h-36 w-full bg-black object-cover" />

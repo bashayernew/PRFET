@@ -352,7 +352,7 @@ export default function ProfileScreen() {
               <div key={p.id} className="relative aspect-square overflow-hidden rounded-2xl bg-slate-900">
                 <button onClick={() => setViewerAt(i)} className="absolute inset-0 h-full w-full active:scale-95">
                   {p.kind === "video" ? (
-                    <video src={p.mediaUrl} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+                    <video src={`${p.mediaUrl}#t=0.1`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
                   ) : (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={p.mediaUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
