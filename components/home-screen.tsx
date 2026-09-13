@@ -275,15 +275,16 @@ export default function HomeScreen() {
           <StripCard icon={<Search className="h-5 w-5" />} tint="bg-sky-50 text-sky-600" label={t("home.boxSearch")} onClick={() => router.push("/discover")} />
         </div>
 
-        {/* Live now — people I follow (and public rooms) broadcasting right this moment */}
-        {liveRooms.length > 0 && (
+        {/* Live now — only people I FOLLOW who are broadcasting right this moment (a public
+            room from a stranger shouldn't appear on everyone's home). */}
+        {liveRooms.filter((r) => follows.includes(r.hostId)).length > 0 && (
           <div className="mt-7">
             <div className="mb-2 flex items-center gap-2">
               <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
               <h2 className="text-[16px] font-extrabold text-ink">{t("home.liveNow")}</h2>
             </div>
             <div className="no-scrollbar -mx-5 flex gap-3.5 overflow-x-auto px-5 pb-1">
-              {liveRooms.map((r) => (
+              {liveRooms.filter((r) => follows.includes(r.hostId)).map((r) => (
                 <button key={r.id} onClick={() => router.push(`/meetings/${r.id}`)} className="flex shrink-0 flex-col items-center gap-1.5">
                   <span className="relative rounded-full bg-gradient-to-tr from-red-500 to-rose-500 p-[2.5px]">
                     <span className="grid place-items-center rounded-full bg-slate-50 p-[2.5px]">

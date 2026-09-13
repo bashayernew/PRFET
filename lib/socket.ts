@@ -22,7 +22,18 @@ export async function getSocket(_token?: string): Promise<any> {
 
   socket = io({
     auth: (cb: (data: unknown) => void) => cb({ token: getAccessToken() }),
-    transports: ["websocket", "polling"],
+    // Start on long-polling (works through every mobile network / proxy) and let Socket.IO
+    // upgrade to a WebSocket when it can. Forcing "websocket" first made the connection FAIL
+    // outright on networks that block raw WebSockets — leaving the callee disconnected
+    // (callee sockets: 0), so calls never rang and live text/end-events never arrived.
+    transports: ["polling", "websocket"],
+    // Keep trying to reconnect for the whole session so a brief network blip doesn't leave
+    // the phone silently offline for calls.
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
   });
 
   if (!wiredAuthRecovery) {
