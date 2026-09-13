@@ -7,7 +7,7 @@ function getRefresh() {
 let refreshing: Promise<string | null> | null = null;
 
 /** Exchange the refresh token for a fresh access token (deduped across concurrent calls). */
-async function refreshAccess(): Promise<string | null> {
+export async function refreshAccess(): Promise<string | null> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
     const rt = getRefresh();

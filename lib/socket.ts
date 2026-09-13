@@ -1,5 +1,5 @@
 // Client-side Socket.IO singleton. Connects with the access token; reused across screens.
-import { getAccessToken, refreshAccessToken } from "@/lib/api";
+import { getAccessToken, refreshAccess } from "@/lib/api";
 
 let socket: any = null;
 let wiredAuthRecovery = false;
@@ -22,11 +22,13 @@ export async function getSocket(_token?: string): Promise<any> {
 
   socket = io({
     auth: (cb: (data: unknown) => void) => cb({ token: getAccessToken() }),
-    // Start on long-polling (works through every mobile network / proxy) and let Socket.IO
-    // upgrade to a WebSocket when it can. Forcing "websocket" first made the connection FAIL
-    // outright on networks that block raw WebSockets — leaving the callee disconnected
-    // (callee sockets: 0), so calls never rang and live text/end-events never arrived.
-    transports: ["polling", "websocket"],
+    // Long-polling ONLY. The server's proxy isn't upgrading WebSockets (the browser logged
+    // "WebSocket is closed before the connection is established"), and every failed upgrade
+    // was tearing the socket down — so the callee showed offline (callee sockets: 0) and
+    // calls/live-text/end-events never arrived. Polling works through the proxy reliably and
+    // is plenty for signaling (the actual call audio is peer-to-peer WebRTC, not the socket).
+    transports: ["polling"],
+    upgrade: false,
     // Keep trying to reconnect for the whole session so a brief network blip doesn't leave
     // the phone silently offline for calls.
     reconnection: true,
