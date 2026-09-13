@@ -106,8 +106,11 @@ export async function joinLiveKit(
     return {
       disconnect: () => { try { room.disconnect(); } catch { /* ignore */ } },
       setMic: (on: boolean) => room.localParticipant.setMicrophoneEnabled(on),
-      setCamera: (on: boolean) => room.localParticipant.setCameraEnabled(on),
-      setScreen: (on: boolean) => room.localParticipant.setScreenShareEnabled(on),
+      // After enabling the camera/screen, refresh the stage IMMEDIATELY so YOUR OWN video
+      // shows right away — don't wait for a remote participant's event to trigger a rescan.
+      // A second delayed sweep covers the track needing a beat to become ready.
+      setCamera: async (on: boolean) => { await room.localParticipant.setCameraEnabled(on); collect(); setTimeout(collect, 400); },
+      setScreen: async (on: boolean) => { await room.localParticipant.setScreenShareEnabled(on); collect(); setTimeout(collect, 400); },
       startAudio: async () => { try { await room.startAudio(); } catch { /* already allowed */ } },
     };
   } catch {
