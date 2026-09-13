@@ -9,7 +9,7 @@ import { catIcon } from "@/lib/cat-icons";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { useLocationSync } from "@/lib/use-location-sync";
-import { apiGet, apiPost, apiDelete, getAccessToken } from "@/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete, getAccessToken } from "@/lib/api";
 import { vipStyle } from "@/lib/vip";
 import { distDisplay } from "@/lib/geo";
 
@@ -59,7 +59,20 @@ export default function DiscoverScreen() {
       .catch(() => {});
   }, [ready]);
 
-  function toggleBle() {
+  // Make sure we're ready to be found before broadcasting: (1) mark myself discoverable so
+  // the server actually returns me to others, and (2) make sure my broadcast code is loaded
+  // (broadcasting an empty code = nobody can identify me). Returns the code to advertise.
+  async function ensureBleReady(): Promise<string> {
+    const token = getAccessToken() || undefined;
+    apiPatch("/api/auth/me", { bleDiscoverable: true }, token).catch(() => {});
+    if (!bleCodeRef.current) {
+      const r = await apiGet<{ code: string }>("/api/search/ble-self", token);
+      if (r.ok && r.data?.code) bleCodeRef.current = r.data.code;
+    }
+    return bleCodeRef.current;
+  }
+
+  async function toggleBle() {
     const native = (window as unknown as { PrfetNative?: { bleStart?: (code?: string) => void; bleStop?: () => void } }).PrfetNative;
     if (!native?.bleStart) { setBleUnsupported(true); return; }
     const w = window as unknown as { __prfetBleFound?: (arr: { id: string; distance?: number }[]) => void };
@@ -70,8 +83,9 @@ export default function DiscoverScreen() {
       if (res.ok && res.data?.people) setBlePeople(res.data.people);
     };
     setBlePeople([]);
-    native.bleStart(bleCodeRef.current);
     setBleOn(true);
+    const code = await ensureBleReady();
+    native.bleStart(code);
   }
 
   // Never leave the radio running when the page unmounts.
@@ -122,7 +136,7 @@ export default function DiscoverScreen() {
     setRadarOn(false);
   }
 
-  function toggleRadar() {
+  async function toggleRadar() {
     if (radarOn) { stopRadar(); return; }
     const native = (window as unknown as { PrfetNative?: { bleStart?: (code?: string) => void; bleStop?: () => void } }).PrfetNative;
     if (!native?.bleStart) { setBleUnsupported(true); return; }
@@ -135,8 +149,9 @@ export default function DiscoverScreen() {
       if (res.status === 403) { setRadarGate("premium"); stopRadar(); return; }
       if (res.ok && res.data?.people) setRadarPeople(res.data.people);
     };
-    native.bleStart(bleCodeRef.current);
     setRadarOn(true);
+    const code = await ensureBleReady();
+    native.bleStart(code);
     // Heartbeat: charge the monthly radar-minutes cap for the time it runs.
     radarTimer.current = setInterval(async () => {
       const res = await apiPost<{ error?: string }>("/api/search/ble-tick", { seconds: 15 }, token);
