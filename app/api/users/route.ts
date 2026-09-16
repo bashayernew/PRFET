@@ -94,13 +94,23 @@ export async function GET(req: Request) {
     };
   });
 
-  // A narrowed slider means "only people I KNOW are this close" — unknown locations drop out.
-  // At the full 100 km range we keep unknowns, so the list never looks needlessly empty.
-  // Distance filtering applies to browsing by proximity, NOT to a name search — a name
-  // search should surface the person wherever they are.
-  const filtered = (maxKm != null && !q)
-    ? list.filter((u) => (u.dist == null ? maxKm >= 100 : parseFloat(u.dist) <= maxKm))
+  // Distance filter (proximity browsing only, never a name search): people with a KNOWN
+  // distance must fall inside the slider. People whose location we don't have yet are kept
+  // regardless — dropping them made narrowing the slider empty the whole list, which is what
+  // "distance search doesn't work" was. They're just sorted last (below).
+  let filtered = (maxKm != null && !q)
+    ? list.filter((u) => u.dist == null || parseFloat(u.dist) <= maxKm)
     : list;
+
+  // When we know where the viewer is, order results by proximity — nearest first — so a
+  // distance search actually surfaces the closest people. Unknown-location users sort last.
+  if (origin) {
+    filtered = filtered.slice().sort((a, b) => {
+      const da = a.dist == null ? Infinity : parseFloat(a.dist);
+      const db = b.dist == null ? Infinity : parseFloat(b.dist);
+      return da - db;
+    });
+  }
 
   // Collapse duplicate accounts: if the same official/business account was created more than
   // once (same name + same avatar), it was showing up 2–3 times. Keep the first (highest-rated,

@@ -1,12 +1,16 @@
 import { prisma } from "@/lib/prisma";
 
 /**
- * Premium has lapsed when it was cancelled (auto-renew off) and its paid time
- * has now run out. Admins never lapse (their premium is permanent).
+ * Premium has lapsed once its paid time runs out. A store auto-renew pushes
+ * `premiumUntil` forward on every successful charge, so an actively-renewing
+ * subscription always has a future date and won't lapse here. A one-off gift, an
+ * admin grant, or a cancelled/failed renewal keeps its date — so once `premiumUntil`
+ * passes, the account drops back to free. This is what makes a subscription actually
+ * END after its month instead of staying premium forever. Admins never lapse.
  */
-export function premiumLapsed(u: { isPremium: boolean; premiumUntil: Date | null; autoRenew: boolean; isAdmin?: boolean }): boolean {
+export function premiumLapsed(u: { isPremium: boolean; premiumUntil: Date | null; autoRenew?: boolean; isAdmin?: boolean }): boolean {
   if (u.isAdmin) return false;
-  return u.isPremium && !u.autoRenew && !!u.premiumUntil && u.premiumUntil < new Date();
+  return u.isPremium && !!u.premiumUntil && u.premiumUntil < new Date();
 }
 
 /**
