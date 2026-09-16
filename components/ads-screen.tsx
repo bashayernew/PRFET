@@ -106,8 +106,14 @@ export default function AdsScreen() {
     if (!token) return;
     const res = await apiGet<{ ads: MyAd[] }>("/api/ads", token);
     if (res.ok && res.data?.ads) setMyAds(res.data.ads);
-    // live ads from real users (shown to everyone in the feed)
-    const served = await apiGet<{ ads: RealAd[] }>("/api/ads/serve?limit=100");
+    // Live ads from real users — shown to EVERYONE in the viewer's country (follow not required),
+    // plus any worldwide ("ALL") ads. The viewer's country drives targeting; an ad reaches every
+    // person in the country/countries it was bought for.
+    const viewerCountry = (typeof window !== "undefined" && localStorage.getItem("herot.country")) || "";
+    const servedUrl = viewerCountry
+      ? `/api/ads/serve?limit=100&country=${encodeURIComponent(viewerCountry)}`
+      : "/api/ads/serve?limit=100";
+    const served = await apiGet<{ ads: RealAd[] }>(servedUrl);
     if (served.ok && served.data?.ads) setRealAds(served.data.ads);
   }, []);
 

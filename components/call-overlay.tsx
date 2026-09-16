@@ -9,6 +9,13 @@ import { startRingback, setCallSpeaker } from "@/lib/ringtone";
 
 type Signal = { from?: string; type: "offer" | "answer" | "ice" | "end"; sdp?: unknown; candidate?: unknown };
 
+// The native Android shell (Capacitor) exposes helpers on window.PrfetNative. On a phone,
+// setSpeakerphone routes the call audio between the loudspeaker and the earpiece via the OS
+// AudioManager — the only thing that works inside a WebView. Absent on web / older builds.
+type NativeAudio = { setSpeakerphone?: (on: boolean) => void };
+const nativeAudio = (): NativeAudio | null =>
+  (typeof window !== "undefined" ? ((window as unknown as { PrfetNative?: NativeAudio }).PrfetNative ?? null) : null);
+
 // 1:1 audio call over WebRTC. Signaling flows through the Socket.IO `call:signal` relay.
 export default function CallOverlay({
   peerId, peerName, incomingOffer, initialIce, onEnd,
@@ -141,6 +148,14 @@ export default function CallOverlay({
     let alive = true;
     (async () => {
       try {
+        // Native Android build: route audio through the OS AudioManager. This is the ONLY way
+        // to actually move sound between the loudspeaker and the earpiece inside a WebView, so
+        // when the bridge is present we always enable the toggle and start on the speaker.
+        const native = nativeAudio();
+        if (native?.setSpeakerphone) {
+          if (alive) { setCanSwitchOutput(true); setSpeaker(true); try { native.setSpeakerphone(true); } catch {} }
+          return;
+        }
         const supported = typeof (audioRef.current as (HTMLAudioElement & { setSinkId?: unknown }) | null)?.setSinkId === "function";
         // No output-device API (iPhone Safari): we can still switch speaker/earpiece via the
         // Web Audio session trick, so enable the toggle. Start on the speaker (matches the
@@ -152,7 +167,13 @@ export default function CallOverlay({
         const devices = await navigator.mediaDevices.enumerateDevices();
         const outs = devices.filter((d) => d.kind === "audiooutput");
         const hasEarpiece = outs.some((d) => /earpiece|receiver/i.test(d.label));
-        if (alive) setCanSwitchOutput(hasEarpiece);
+        // On a phone the earpiece rarely shows a readable label, but the user still needs to be
+        // able to turn the speaker off — so enable the toggle on any touch device, not just when
+        // a labelled earpiece is found. (On a one-output laptop it stays disabled.)
+        const isMobile = typeof navigator !== "undefined" &&
+          (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+            (typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches));
+        if (alive) setCanSwitchOutput(hasEarpiece || isMobile);
       } catch { /* enumeration blocked — leave the toggle disabled */ }
     })();
     return () => { alive = false; };
@@ -194,6 +215,17 @@ export default function CallOverlay({
     const el = audioRef.current;
     if (!el || !canSwitchOutput) return;
     const next = !speaker;
+
+    // Native Android build: flip the OS speakerphone route — the only reliable way to move
+    // audio to/from the earpiece inside a WebView.
+    const native = nativeAudio();
+    if (native?.setSpeakerphone) {
+      try { native.setSpeakerphone(next); } catch {}
+      el.muted = false;
+      el.play().catch(() => {});
+      setSpeaker(next);
+      return;
+    }
 
     type SinkAudio = HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
     const sinkEl = el as SinkAudio;

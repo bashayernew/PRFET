@@ -37,6 +37,7 @@ import { registerNativePush } from "@/lib/native-push";
 
 type Me = { displayName: string; accountType: string; country: string | null; browseCountries: string; shareLocation: boolean; avatarUrl: string | null; isPremium: boolean; isAdmin?: boolean; hideTop?: boolean; social1?: string | null; social2?: string | null; social3?: string | null };
 type StoryUser = { id: string; displayName: string; avatarUrl: string | null; category: string | null };
+type FeedAd = { id: string; caption: string | null; mediaUrl: string | null; advertiser: string; userId: string };
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -50,6 +51,7 @@ export default function HomeScreen() {
   const [dirUsers, setDirUsers] = useState<{ id: string; displayName: string; category: string | null }[] | null>(null);
   const [storyUsers, setStoryUsers] = useState<StoryUser[]>([]);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [feedAds, setFeedAds] = useState<FeedAd[]>([]);
   const [liveRooms, setLiveRooms] = useState<{ id: string; title: string; host: string; hostId: string; hostAvatar: string | null }[]>([]);
   const [viewerAt, setViewerAt] = useState<number | null>(null); // index into posts for the fullscreen viewer
   const [comments, setComments] = useState<FeedPost | null>(null);
@@ -92,6 +94,15 @@ export default function HomeScreen() {
     const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
   }, [ready]);
+
+  // Country-targeted ads mixed into the home feed — everyone in the ad's country sees them
+  // (no follow needed). Falls back to worldwide ads if we don't know the viewer's country yet.
+  useEffect(() => {
+    if (!ready) return;
+    const country = me?.country || (typeof window !== "undefined" ? localStorage.getItem("herot.country") : "") || "";
+    const url = country ? `/api/ads/serve?limit=8&country=${encodeURIComponent(country)}` : "/api/ads/serve?limit=8";
+    apiGet<{ ads: FeedAd[] }>(url).then((r) => { if (r.ok && r.data?.ads) setFeedAds(r.data.ads); }).catch(() => {});
+  }, [ready, me?.country]);
 
   useEffect(() => {
     if (!ready) return;
@@ -356,17 +367,24 @@ export default function HomeScreen() {
           </button>
         ) : (
           <div className="-mx-5 overflow-hidden">
-            {posts.map((p, i) => (
-              <PostCard
-                key={p.id}
-                post={p}
-                onComments={setComments}
-                onShare={setShare}
-                onDeleted={(id) => setPosts((ps) => ps.filter((x) => x.id !== id))}
-                onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }}
-                onOpenMedia={() => setViewerAt(i)}
-              />
-            ))}
+            {posts.map((p, i) => {
+              // After every 4 posts, slot in a country-targeted ad (cycling through them).
+              const showAd = feedAds.length > 0 && i > 0 && (i + 1) % 4 === 0;
+              const ad = showAd ? feedAds[Math.floor((i + 1) / 4 - 1) % feedAds.length] : null;
+              return (
+                <div key={p.id}>
+                  <PostCard
+                    post={p}
+                    onComments={setComments}
+                    onShare={setShare}
+                    onDeleted={(id) => setPosts((ps) => ps.filter((x) => x.id !== id))}
+                    onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }}
+                    onOpenMedia={() => setViewerAt(i)}
+                  />
+                  {ad && <FeedAdCard key={`ad-${ad.id}-${i}`} ad={ad} label={t("home.sponsored")} cta={t("ads.contact")} onClick={() => router.push(`/messages/${ad.userId}`)} />}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -407,6 +425,29 @@ export default function HomeScreen() {
       />
 
       <BottomNav active="home" />
+    </div>
+  );
+}
+function FeedAdCard({ ad, label, cta, onClick }: { ad: FeedAd; label: string; cta: string; onClick: () => void }) {
+  return (
+    <div className="mx-5 my-3 overflow-hidden rounded-3xl bg-white ring-1 ring-slate-100">
+      <div className="flex items-center gap-2 px-4 pt-3">
+        <Megaphone className="h-4 w-4 text-brand-600" />
+        <span className="text-[12px] font-extrabold text-brand-600">{label}</span>
+        <span className="ms-auto truncate text-[12px] font-bold text-muted">{ad.advertiser}</span>
+      </div>
+      {ad.mediaUrl && (
+        ad.mediaUrl.match(/\.(mp4|webm|mov)(\?|#|$)/i) ? (
+          <video src={`${ad.mediaUrl}#t=0.1`} className="mt-2.5 max-h-[420px] w-full bg-black object-contain" controls playsInline preload="metadata" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={ad.mediaUrl} alt="" className="mt-2.5 max-h-[420px] w-full object-cover" />
+        )
+      )}
+      {ad.caption && <p className="whitespace-pre-wrap px-4 pt-3 text-[13.5px] font-medium leading-relaxed text-ink">{ad.caption}</p>}
+      <button onClick={onClick} className="m-4 flex w-[calc(100%-2rem)] items-center justify-center gap-1.5 rounded-2xl bg-brand-600 py-2.5 text-[13px] font-bold text-white active:scale-95">
+        <Megaphone className="h-4 w-4" /> {cta}
+      </button>
     </div>
   );
 }

@@ -14,19 +14,29 @@ export async function GET(req: Request) {
     data: { status: "expired" },
   });
 
-  const ads = await prisma.ad.findMany({
+  const candidates = await prisma.ad.findMany({
     where: {
       status: "active",
       expiresAt: { gt: new Date() },
       // an ad with no image AND no text is an empty box — never show it to anyone
       AND: [{ OR: [{ mediaUrl: { not: null } }, { caption: { not: null } }] }],
-      // country column may hold a CSV of targets (e.g. "KW,SA")
+      // country column may hold a CSV of targets (e.g. "KW,SA"); coarse prefilter here,
+      // exact CSV membership is enforced in JS below so "SA" can't match "USA" etc.
       ...(country ? { OR: [{ country: { contains: country } }, { country: "ALL" }] } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: limit,
     include: { user: { select: { displayName: true } } },
   });
+
+  // Exact country targeting: an ad reaches everyone whose country is in the ad's target list
+  // (or an ad marked "ALL"). No follow relationship required.
+  const ads = country
+    ? candidates.filter((a) => {
+        const targets = (a.country || "").toUpperCase().split(",").map((c) => c.trim()).filter(Boolean);
+        return targets.includes("ALL") || targets.includes(country);
+      })
+    : candidates;
 
   // impression counting per served ad
   if (ads.length) {

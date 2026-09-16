@@ -13,6 +13,8 @@ export type LkRoom = {
   setMic: (on: boolean) => Promise<void>;
   setCamera: (on: boolean) => Promise<void>;
   setScreen: (on: boolean) => Promise<void>;
+  // Flip between the front (selfie) and back camera on a phone.
+  flipCamera: () => Promise<void>;
   // iOS Safari blocks audio until a user gesture — call this from a tap so people can be heard.
   startAudio: () => Promise<void>;
 };
@@ -103,14 +105,29 @@ export async function joinLiveKit(
     });
     collect();
 
+    // Which lens the phone camera is using. Start on the front (selfie) camera.
+    let facing: "user" | "environment" = "user";
+
     return {
       disconnect: () => { try { room.disconnect(); } catch { /* ignore */ } },
       setMic: (on: boolean) => room.localParticipant.setMicrophoneEnabled(on),
       // After enabling the camera/screen, refresh the stage IMMEDIATELY so YOUR OWN video
       // shows right away — don't wait for a remote participant's event to trigger a rescan.
       // A second delayed sweep covers the track needing a beat to become ready.
-      setCamera: async (on: boolean) => { await room.localParticipant.setCameraEnabled(on); collect(); setTimeout(collect, 400); },
+      setCamera: async (on: boolean) => { await room.localParticipant.setCameraEnabled(on, { facingMode: facing }); collect(); setTimeout(collect, 400); },
       setScreen: async (on: boolean) => { await room.localParticipant.setScreenShareEnabled(on); collect(); setTimeout(collect, 400); },
+      // Toggle front/back. Restart the camera track with the new facingMode (the reliable way
+      // to switch lenses on mobile) only if the camera is currently on.
+      flipCamera: async () => {
+        facing = facing === "user" ? "environment" : "user";
+        try {
+          if (room.localParticipant.isCameraEnabled) {
+            await room.localParticipant.setCameraEnabled(false);
+            await room.localParticipant.setCameraEnabled(true, { facingMode: facing });
+            collect(); setTimeout(collect, 400);
+          }
+        } catch { /* ignore */ }
+      },
       startAudio: async () => { try { await room.startAudio(); } catch { /* already allowed */ } },
     };
   } catch {

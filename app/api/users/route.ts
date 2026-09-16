@@ -39,6 +39,8 @@ export async function GET(req: Request) {
     where: {
       ...(scope === "all" ? {} : scope === "people" ? { accountType: "personal" } : { accountType: "business" }),
       visibility: "public",
+      // Never show the viewer their own account in search results.
+      ...(payload ? { id: { not: payload.sub } } : {}),
       // A name search should find anyone by that name, so the country filter is bypassed
       // when q is present (distance filtering below is likewise skipped for name searches).
       ...(countries.length && !q ? { country: { in: countries } } : {}),
@@ -100,6 +102,18 @@ export async function GET(req: Request) {
     ? list.filter((u) => (u.dist == null ? maxKm >= 100 : parseFloat(u.dist) <= maxKm))
     : list;
 
-  return NextResponse.json({ users: filtered, hasOrigin: !!origin });
+  // Collapse duplicate accounts: if the same official/business account was created more than
+  // once (same name + same avatar), it was showing up 2–3 times. Keep the first (highest-rated,
+  // since the query is already ordered) and drop the rest. Distinct real people practically
+  // never share both name and photo, so genuine users aren't hidden.
+  const seen = new Set<string>();
+  const deduped = filtered.filter((u) => {
+    const key = `${(u.displayName || "").trim().toLowerCase()}|${u.avatarUrl || ""}`;
+    if (u.avatarUrl && seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return NextResponse.json({ users: deduped, hasOrigin: !!origin });
 }
 // (sync)

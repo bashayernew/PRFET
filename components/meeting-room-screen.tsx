@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mic, MicOff, Hand, PhoneOff, Video, VideoOff, X, MessageSquare, Ban, Crown, Users,
-  Share2, Check, ShieldAlert, MonitorUp, Monitor, Bell, Send,
+  Share2, Check, ShieldAlert, MonitorUp, Monitor, Bell, Send, SwitchCamera,
 } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
@@ -355,6 +355,9 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
       return next;
     });
   }
+  function flipCamera() {
+    roomRef.current?.flipCamera().catch(() => {});
+  }
 
   if (!ready || access === "loading") return null;
 
@@ -546,6 +549,11 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
           <CtrlBtn active={myVideo} pending={myWant === "video"} onClick={toggleVideo} activeCls="bg-brand-500" label={t("meet.video")}>
             {myVideo ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
           </CtrlBtn>
+          {myVideo && (
+            <CtrlBtn active={false} onClick={flipCamera} activeCls="bg-brand-500" label={t("meet.flip")}>
+              <SwitchCamera className="h-6 w-6" />
+            </CtrlBtn>
+          )}
           <CtrlBtn active={myScreen} pending={myWant === "screen"} onClick={toggleScreen} activeCls="bg-violet-500" label={t("meet.screen")}>
             <MonitorUp className="h-6 w-6" />
           </CtrlBtn>
