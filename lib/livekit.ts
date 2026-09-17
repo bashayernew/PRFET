@@ -12,12 +12,28 @@ export type LkRoom = {
   disconnect: () => void;
   setMic: (on: boolean) => Promise<void>;
   setCamera: (on: boolean) => Promise<void>;
-  setScreen: (on: boolean) => Promise<void>;
-  // Flip between the front (selfie) and back camera on a phone.
-  flipCamera: () => Promise<void>;
+  /** Returns false when the browser refused (mobile has no screen capture at all). */
+  setScreen: (on: boolean) => Promise<boolean>;
+  /** Flip between the front (selfie) and back camera. Returns false if it couldn't switch. */
+  flipCamera: () => Promise<boolean>;
   // iOS Safari blocks audio until a user gesture — call this from a tap so people can be heard.
   startAudio: () => Promise<void>;
 };
+
+/**
+ * Screen capture is DESKTOP-ONLY on the web.
+ * Android Chrome exposes `getDisplayMedia` but always rejects it with NotAllowedError, and
+ * iOS/iPadOS Safari (which every iOS browser is built on) doesn't implement it at all. So on
+ * a phone the share button can never work through the WebView — it needs a native
+ * MediaProjection (Android) / ReplayKit (iOS) implementation. We detect it up front so the UI
+ * can say so instead of silently doing nothing.
+ */
+export function screenShareSupported(): boolean {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) return false;
+  // Coarse pointer + touch ⇒ phone/tablet, where the API exists but always rejects.
+  const touch = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+  return !touch;
+}
 
 export async function joinLiveKit(
   url: string,
@@ -115,18 +131,61 @@ export async function joinLiveKit(
       // shows right away — don't wait for a remote participant's event to trigger a rescan.
       // A second delayed sweep covers the track needing a beat to become ready.
       setCamera: async (on: boolean) => { await room.localParticipant.setCameraEnabled(on, { facingMode: facing }); collect(); setTimeout(collect, 400); },
-      setScreen: async (on: boolean) => { await room.localParticipant.setScreenShareEnabled(on); collect(); setTimeout(collect, 400); },
-      // Toggle front/back. Restart the camera track with the new facingMode (the reliable way
-      // to switch lenses on mobile) only if the camera is currently on.
+
+      setScreen: async (on: boolean) => {
+        if (on && !screenShareSupported()) {
+          console.warn("[live] screen share unavailable on this device (mobile browsers have no getDisplayMedia)");
+          return false;
+        }
+        try {
+          await room.localParticipant.setScreenShareEnabled(on);
+          collect(); setTimeout(collect, 400);
+          return true;
+        } catch (e) {
+          // NotAllowedError also fires when the person cancels the picker — not an error.
+          console.warn("[live] screen share failed:", e);
+          return false;
+        }
+      },
+
+      /**
+       * Flip front/back.
+       *
+       * `setCameraEnabled(false)` then `(true, {facingMode})` was unreliable: the browser
+       * often handed back the SAME camera, so the button appeared dead. `restartTrack` on the
+       * existing publication is the supported way to swap lenses, so try that first and only
+       * fall back to the republish dance.
+       *
+       * If the camera is currently OFF, turn it on with the new lens — pressing flip should
+       * always do something visible rather than silently toggling an internal variable.
+       */
       flipCamera: async () => {
         facing = facing === "user" ? "environment" : "user";
         try {
-          if (room.localParticipant.isCameraEnabled) {
-            await room.localParticipant.setCameraEnabled(false);
+          if (!room.localParticipant.isCameraEnabled) {
             await room.localParticipant.setCameraEnabled(true, { facingMode: facing });
             collect(); setTimeout(collect, 400);
+            return true;
           }
-        } catch { /* ignore */ }
+
+          type Restartable = { restartTrack?: (o: { facingMode: string }) => Promise<void> };
+          const pubs = room.localParticipant.videoTrackPublications as Map<string, { source?: string; track?: Restartable }>;
+          let track: Restartable | undefined;
+          pubs.forEach((p) => { if (p.source !== "screen_share" && p.track?.restartTrack) track = p.track; });
+
+          if (track?.restartTrack) {
+            await track.restartTrack({ facingMode: facing });
+          } else {
+            await room.localParticipant.setCameraEnabled(false);
+            await room.localParticipant.setCameraEnabled(true, { facingMode: facing });
+          }
+          collect(); setTimeout(collect, 400);
+          return true;
+        } catch (e) {
+          console.warn("[live] camera flip failed:", e);
+          facing = facing === "user" ? "environment" : "user"; // undo, we didn't switch
+          return false;
+        }
       },
       startAudio: async () => { try { await room.startAudio(); } catch { /* already allowed */ } },
     };

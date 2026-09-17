@@ -63,12 +63,40 @@ export default function ShareSheet({ post, onClose, onToast }: { post: FeedPost;
     if (res.ok) setSent((s) => ({ ...s, [p.id]: true }));
   }
 
+  /**
+   * Copy the link. `navigator.clipboard` is missing or blocked in a lot of Android
+   * WebViews, and the failure used to be swallowed — the button just did nothing in the
+   * app. Fall back to the old execCommand trick, which WebViews still honour.
+   */
   async function copy() {
+    let ok = false;
     try {
-      await navigator.clipboard.writeText(link);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(link);
+        ok = true;
+      }
+    } catch { /* fall through to the legacy path */ }
+
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = link;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch { /* genuinely no clipboard */ }
+    }
+
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
-    } catch { /* clipboard blocked */ }
+    } else {
+      onToast?.(t("post.copyFailed"));
+    }
   }
 
   async function native() {
@@ -80,8 +108,9 @@ export default function ShareSheet({ post, onClose, onToast }: { post: FeedPost;
     }
   }
 
+  // z-[70]: above the fullscreen media viewer (z-[60]) — same reason as comments-sheet.
   return (
-    <div dir={dir} className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
+    <div dir={dir} className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50" onClick={onClose}>
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}

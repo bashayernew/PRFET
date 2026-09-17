@@ -10,7 +10,7 @@ import {
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, apiPatch, getAccessToken } from "@/lib/api";
-import { joinLiveKit, type LkRoom, type StageTrack } from "@/lib/livekit";
+import { joinLiveKit, screenShareSupported, type LkRoom, type StageTrack } from "@/lib/livekit";
 import { getSocket } from "@/lib/socket";
 import { setSecureScreen } from "@/lib/secure-screen";
 import RoomGate from "@/components/room-gate";
@@ -347,16 +347,27 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
       return next;
     });
   }
-  function toggleScreen() {
-    if (!amAdmin && !myCan.screen) { request("screen"); return; }
-    setMyScreen((v) => {
-      const next = !v;
-      roomRef.current?.setScreen(next).catch(() => {});
-      return next;
-    });
+  /** Brief message in the existing bottom pill (same one the stage-full notice uses). */
+  function toast(msg: string) {
+    setNote(msg);
+    setTimeout(() => setNote(null), 2800);
   }
-  function flipCamera() {
-    roomRef.current?.flipCamera().catch(() => {});
+
+  async function toggleScreen() {
+    if (!amAdmin && !myCan.screen) { request("screen"); return; }
+    // Phones can't screen-share at all through a browser/WebView — say so instead of
+    // flipping the button on and leaving a dead state behind.
+    if (!myScreen && !screenShareSupported()) { toast(t("meet.screenUnsupported")); return; }
+    const next = !myScreen;
+    setMyScreen(next);
+    const ok = await (roomRef.current?.setScreen(next) ?? Promise.resolve(false));
+    if (!ok) setMyScreen(!next); // refused or cancelled — put the button back
+  }
+
+  async function flipCamera() {
+    const ok = await (roomRef.current?.flipCamera() ?? Promise.resolve(false));
+    if (!ok) toast(t("meet.flipFailed"));
+    else setMyVideo(true); // flipping turns the camera on if it was off
   }
 
   if (!ready || access === "loading") return null;

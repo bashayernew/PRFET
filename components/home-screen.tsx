@@ -381,7 +381,17 @@ export default function HomeScreen() {
                     onToast={(m) => { setStoryToast(m); setTimeout(() => setStoryToast(null), 1800); }}
                     onOpenMedia={() => setViewerAt(i)}
                   />
-                  {ad && <FeedAdCard key={`ad-${ad.id}-${i}`} ad={ad} label={t("home.sponsored")} cta={t("ads.contact")} onClick={() => router.push(`/messages/${ad.userId}`)} />}
+                  {ad && (
+                    <FeedAdCard
+                      key={`ad-${ad.id}-${i}`}
+                      ad={ad}
+                      label={t("home.sponsored")}
+                      cta={t("ads.contact")}
+                      /* Open the advertiser's chat with the ad already written in the box,
+                         ready to send — so they know which ad the enquiry is about. */
+                      onClick={() => router.push(`/messages/${ad.userId}?ad=${encodeURIComponent(ad.id)}`)}
+                    />
+                  )}
                 </div>
               );
             })}

@@ -63,6 +63,34 @@ export default function ChatScreen({ id }: { id: string }) {
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  /**
+   * Arriving from "contact advertiser" on a home-feed ad (/messages/<id>?ad=<adId>).
+   * Loads that ad and drops it into the composer — NOT sent, so the person can add their
+   * own question first. Read off window.location rather than useSearchParams(), which
+   * would force this whole page into a Suspense boundary for a one-shot read.
+   */
+  const adPrefilled = useRef(false);
+  useEffect(() => {
+    if (adPrefilled.current) return;
+    const adId = new URLSearchParams(window.location.search).get("ad");
+    if (!adId) return;
+    adPrefilled.current = true;
+    (async () => {
+      const res = await apiGet<{ ad?: { caption: string | null; mediaUrl: string | null } }>(
+        `/api/ads/${adId}`,
+        getAccessToken() || undefined
+      );
+      const ad = res.ok ? res.data?.ad : null;
+      const lines = [t("ads.enquiryIntro")];
+      if (ad?.caption?.trim()) lines.push(`"${ad.caption.trim()}"`);
+      if (ad?.mediaUrl) lines.push(`${window.location.origin}${ad.mediaUrl}`);
+      setText(lines.join("\n"));
+      // Drop the query string so a refresh doesn't re-fill an already-edited box.
+      window.history.replaceState({}, "", `/messages/${id}`);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [attachOpen, setAttachOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [giftOpen, setGiftOpen] = useState(false);

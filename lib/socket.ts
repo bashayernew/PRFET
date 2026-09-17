@@ -47,7 +47,12 @@ export async function getSocket(_token?: string): Promise<any> {
       refreshing = true;
       try {
         // If this succeeds the next automatic retry picks the new token up via `auth`.
-        await refreshAccessToken();
+        // NOTE: this used to call a non-existent `refreshAccessToken()`, which threw a
+        // ReferenceError instead of refreshing — so an expired token left the socket dead
+        // for the rest of the session (offline for calls, live chat and end-of-live events).
+        await refreshAccess();
+      } catch {
+        /* refresh failed — Socket.IO keeps retrying; a dead session just stays dead */
       } finally {
         // Small gap so a permanently-invalid session can't spin in a tight loop.
         setTimeout(() => { refreshing = false; }, 5000);

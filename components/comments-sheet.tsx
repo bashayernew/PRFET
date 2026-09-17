@@ -57,8 +57,11 @@ export default function CommentsSheet({
     onCount(next.length);
   }
 
+  // z-[70]: must sit ABOVE the fullscreen media viewer (z-[60]). At z-50 this sheet opened
+  // BEHIND the viewer's opaque backdrop, so tapping comment on a fullscreen video looked
+  // like it did nothing at all.
   return (
-    <div dir={dir} className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={onClose}>
+    <div dir={dir} className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50" onClick={onClose}>
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
