@@ -35,3 +35,10 @@ _to_delete/
 google-services.json
 android/app/google-services.json
 *firebase-adminsdk*.json
+
+# Signing keys and mail credentials — these WERE committed once and had to be removed
+# with `git rm --cached`. Without these rules a single `git add -A` puts them straight
+# back in the public repo.
+*.jks
+*.keystore
+ses-smtp-user.*.csv
