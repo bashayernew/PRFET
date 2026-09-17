@@ -23,6 +23,57 @@ function resendKey(): string | null {
 }
 
 /**
+ * Postmark server token. Set POSTMARK_TOKEN to make Postmark the primary sender —
+ * it takes priority over Resend below, so switching providers is an env change only.
+ */
+function postmarkToken(): string | null {
+  return process.env.POSTMARK_TOKEN?.trim() || null;
+}
+
+/**
+ * Send through Postmark's HTTPS API (port 443, same reasoning as the Resend path).
+ *
+ * `MessageStream` matters: Postmark keeps transactional and broadcast traffic on separate
+ * streams and judges their reputation separately, which is the whole reason OTP delivery
+ * is reliable there. Codes must go out on the transactional stream ("outbound").
+ */
+async function postmarkSend(to: string, subject: string, text: string, replyTo?: string): Promise<boolean> {
+  const token = postmarkToken();
+  if (!token) return false;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch("https://api.postmarkapp.com/email", {
+      method: "POST",
+      headers: {
+        "X-Postmark-Server-Token": token,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        From: `PRFET <${fromAddress()}>`,
+        To: to,
+        Subject: subject,
+        TextBody: text,
+        MessageStream: process.env.POSTMARK_STREAM || "outbound",
+        ...(replyTo ? { ReplyTo: replyTo } : {}),
+      }),
+      signal: ctrl.signal,
+    });
+    if (res.ok) return true;
+    // Postmark answers 422 with an ErrorCode worth seeing in `docker compose logs app`
+    // — 300 is a bad From address, 400 means the server is still in pending approval.
+    console.error("[postmark] send failed:", res.status, (await res.text().catch(() => "")).slice(0, 300));
+    return false;
+  } catch (e) {
+    console.error("[postmark] network/timeout:", String(e).slice(0, 200));
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Send through Resend's HTTPS API (port 443 — never blocked by host SMTP throttling).
  * Hard 8s timeout so a slow network can never hang the request. Returns true on success.
  */
@@ -99,7 +150,8 @@ export async function sendSupportEmail(t: {
   // itself. Never leave it as the From address — `noreply@` is not a real mailbox, so
   // hitting Reply on one of these would bounce with 550 RecipientNotFound.
   const replyTo = t.contact || to;
-  // Prefer the HTTPS API; fall back to SMTP if no Resend key is set.
+  // Postmark first (when configured), then Resend, then plain SMTP.
+  if (await postmarkSend(to, subject, text, replyTo)) return;
   if (await resendSend(to, subject, text, replyTo)) return;
   await smtpSend(to, subject, text, replyTo);
 }
@@ -118,7 +170,9 @@ export async function sendOtpEmail(to: string, code: string, purpose: "verify" |
     `رمز التحقق الخاص بك هو: ${code}\nصالح لمدة 10 دقائق.\n\n` +
     `Your PRFET code is: ${code}\nIt is valid for 10 minutes.\n\n` +
     `PRFET`;
-  // Prefer the HTTPS API (fast, unblockable); fall back to SMTP.
+  // Postmark first (when POSTMARK_TOKEN is set), then Resend, then SMTP. Each returns
+  // false rather than throwing, so a dead provider silently falls through to the next.
+  if (await postmarkSend(to, subject, text)) return true;
   if (await resendSend(to, subject, text)) return true;
   return smtpSend(to, subject, text);
 }

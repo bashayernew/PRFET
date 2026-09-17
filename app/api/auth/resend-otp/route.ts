@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { generateOtp, randomOtp, sha256, identifierWhere } from "@/lib/auth";
 import { sendOtpEmail } from "@/lib/email";
+import { otpGuard, otpSent } from "@/lib/otp-guard";
 
 const schema = z.object({ identifier: z.string().min(3) });
 const OTP_TTL_MIN = 10;
@@ -22,6 +23,15 @@ export async function POST(req: Request) {
   // Always respond ok (don't leak which accounts exist).
   if (!user) return NextResponse.json({ ok: true });
 
+  // Throttle BEFORE issuing a code. Unlimited resends here is what made the email
+  // provider read our traffic as spam; see lib/otp-guard.ts.
+  if (user.email) {
+    const guard = otpGuard(req, user.email);
+    if (!guard.ok) {
+      return NextResponse.json({ error: "rate_limited", retryAfter: guard.retryAfter }, { status: 429 });
+    }
+  }
+
   const code = user.email ? randomOtp() : generateOtp();
   await prisma.otpCode.create({
     data: {
@@ -31,6 +41,9 @@ export async function POST(req: Request) {
       expiresAt: new Date(Date.now() + OTP_TTL_MIN * 60 * 1000),
     },
   });
-  if (user.email) await sendOtpEmail(user.email, code, "verify");
+  if (user.email) {
+    await sendOtpEmail(user.email, code, "verify");
+    otpSent(req, user.email);
+  }
   return NextResponse.json({ ok: true });
 }
