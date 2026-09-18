@@ -40,7 +40,17 @@ export async function joinLiveKit(
   token: string,
   onSpeakers: (identities: string[]) => void,
   onTracks?: (tracks: StageTrack[]) => void,
-  micOnJoin = false
+  micOnJoin = false,
+  /**
+   * Called with `true` when the browser is refusing to play remote audio.
+   *
+   * Phones and tablets block audio playback until the page has had a real user gesture.
+   * `room.startAudio()` is fired when someone toggles their mic, but a LISTENER who joins
+   * and taps nothing never triggers it — so they sit in a room that looks fine and hear
+   * total silence, with nothing on screen to explain it. The room screen uses this to show
+   * a "tap to enable sound" button, which supplies the gesture.
+   */
+  onAudioBlocked?: (blocked: boolean) => void
 ): Promise<LkRoom | null> {
   try {
     const lk = await import("livekit-client");
@@ -101,6 +111,14 @@ export async function joinLiveKit(
     // Register handlers BEFORE connecting, so tracks that ALREADY exist in the room when we
     // join fire TrackSubscribed and get picked up — otherwise the remote camera stayed blank
     // until you published your own track and re-triggered a scan.
+    // Fires whenever the browser starts or stops allowing playback. `canPlaybackAudio` is
+    // false while blocked; we report the inverse so the UI can prompt for the tap.
+    if (onAudioBlocked) {
+      room.on(lk.RoomEvent.AudioPlaybackStatusChanged, () => {
+        onAudioBlocked(!room.canPlaybackAudio);
+      });
+    }
+
     room.on(lk.RoomEvent.TrackSubscribed, onSub);
     room.on(lk.RoomEvent.TrackUnsubscribed, onUnsub);
     room.on(lk.RoomEvent.LocalTrackPublished, collect);

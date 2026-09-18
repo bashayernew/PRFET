@@ -106,13 +106,27 @@ app.prepare().then(() => {
     }
 
     // ---- Meeting rooms: presence in the room channel + in-room text chat ----
+    /**
+     * Join the room's socket channel — this is what makes live comments arrive.
+     *
+     * This used to require an existing MeetingParticipant row and returned silently when
+     * there wasn't one. But the socket connects BEFORE the HTTP auto-join creates that row,
+     * so the join was usually rejected and the viewer never received a single message — with
+     * no error anywhere to explain it. A client-side retry was added later but reads a
+     * socket ref that is often still null, so it missed too.
+     *
+     * The row check was never a security boundary anyway: SENDING is gated separately in
+     * "meeting:chat" (canText or host). Receiving only needs to exclude people who were
+     * kicked, which is what this now does — and being a plain lookup with no ordering
+     * requirement, it can't race.
+     */
     socket.on("meeting:join", async (p) => {
       const mid = p && p.meetingId;
       if (!mid) return;
       const part = await prisma.meetingParticipant
         .findUnique({ where: { meetingId_userId: { meetingId: mid, userId: uid } } })
         .catch(() => null);
-      if (!part || part.kicked) return;
+      if (part && part.kicked) return; // removed by the host — stay out
       socket.join(`meet:${mid}`);
     });
 

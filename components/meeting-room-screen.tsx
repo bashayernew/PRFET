@@ -50,6 +50,8 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   const [myId, setMyId] = useState("");
   const [rosterOpen, setRosterOpen] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  /** True while the browser refuses to play remote audio (mobile needs a tap first). */
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const [joinReqs, setJoinReqs] = useState<JoinReq[]>([]);
   const [reqBoxOpen, setReqBoxOpen] = useState(false);
   const [people, setPeople] = useState<P[]>([]);
@@ -149,7 +151,11 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
           setPeople((ps) => ps.map((p) => (speakers.includes(p.id) ? { ...p, state: "talking" } : p)));
         },
         (tk: StageTrack[]) => setTracks(tk),
-        false
+        false,
+        // Phones and tablets refuse to play audio until the page has had a real tap. A
+        // listener who joins and touches nothing hears silence with no explanation — this
+        // surfaces a button that both explains it and provides the gesture.
+        (blocked: boolean) => setAudioBlocked(blocked)
       );
       if (dead) { room?.disconnect(); return; }
       roomRef.current = room;
@@ -679,6 +685,21 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {audioBlocked && (
+        <div className="fixed inset-x-0 bottom-40 z-[61] flex justify-center px-6">
+          <button
+            onClick={async () => {
+              // The tap itself is what the browser is waiting for.
+              await roomRef.current?.startAudio();
+              setAudioBlocked(false);
+            }}
+            className="rounded-full bg-brand-600 px-5 py-3 text-[13px] font-extrabold text-white shadow-lg active:scale-95"
+          >
+            {t("meet.enableSound")}
+          </button>
         </div>
       )}
 
