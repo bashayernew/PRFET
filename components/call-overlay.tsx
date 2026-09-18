@@ -22,6 +22,8 @@ export default function CallOverlay({
 }: { peerId: string; peerName: string; incomingOffer: unknown | null; initialIce?: unknown[]; onEnd: () => void }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<"connecting" | "ringing" | "in-call" | "failed">(incomingOffer ? "connecting" : "ringing");
+  /** The DOMException name when a call can't start — shown under the error so a tester can report it. */
+  const [failReason, setFailReason] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [speaker, setSpeaker] = useState(true);
   // Whether this device has more than one audio output (i.e. a phone earpiece + speaker).
@@ -124,7 +126,16 @@ export default function CallOverlay({
         // Most often: the person blocked the microphone, or there is no mic at all.
         // Without this the promise rejected silently and the call just never started.
         console.error("[call] failed to start:", err);
-        if (!ended) setStatus("failed");
+        // Keep the reason. "Couldn't reach the microphone" is true but useless when a
+        // tester reports it: NotAllowedError (permission refused — on Android the app
+        // itself may never have been granted RECORD_AUDIO) and NotFoundError (no mic at
+        // all) need completely different fixes, and without the name we can't tell which
+        // happened on a phone we can't attach a debugger to.
+        if (!ended) {
+          const e = err as { name?: string; message?: string };
+          setFailReason(e?.name || e?.message || "unknown");
+          setStatus("failed");
+        }
       }
     })();
 
@@ -263,6 +274,9 @@ export default function CallOverlay({
             : status === "ringing" ? t("call.ringing")
             : t("call.connecting")}
         </p>
+        {status === "failed" && failReason && (
+          <p className="mt-1 text-[11px] font-mono text-brand-200/70" dir="ltr">{failReason}</p>
+        )}
       </div>
       <div className="mt-4 flex items-center gap-5">
         <button onClick={toggleMute} aria-label={t("call.mute")} className={`grid h-14 w-14 place-items-center rounded-full ${muted ? "bg-white text-brand-700" : "bg-white/15"}`}>

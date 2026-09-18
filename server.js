@@ -395,6 +395,23 @@ app.prepare().then(() => {
   sweepCheckins();
   setInterval(sweepCheckins, 30 * 60 * 1000); // every 30 minutes
 
+  /**
+   * Presence reset on boot.
+   *
+   * `online` is only ever cleared by the socket "disconnect" handler. If the process dies
+   * without that running — a container restart, a deploy, an instance stop — every user who
+   * was connected stays `online: true` forever. They then look available to call while
+   * having no live socket at all: the caller dials, `io.to(peerId)` relays to zero sockets,
+   * and neither side sees anything happen.
+   *
+   * At boot, by definition, nobody is connected yet. So the truth is always "everyone
+   * offline", and clients set themselves back online as they reconnect.
+   */
+  prisma.user
+    .updateMany({ where: { online: true }, data: { online: false } })
+    .then((r) => { if (r.count) console.log(`> presence: cleared ${r.count} stale online flag(s)`); })
+    .catch((e) => console.error("presence reset failed", e && e.message));
+
   const port = process.env.PORT || 3000;
   server.listen(port, () => console.log(`> Herot ready on http://localhost:${port}`));
 });
