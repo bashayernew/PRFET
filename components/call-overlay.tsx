@@ -34,6 +34,8 @@ export default function CallOverlay({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sockRef = useRef<{ emit: (e: string, p: unknown) => void; on: (e: string, cb: (p: Signal) => void) => void; off: (e: string, cb?: (p: Signal) => void) => void } | null>(null);
   const handlerRef = useRef<((p: Signal) => void) | null>(null);
+  /** Re-sends the offer when a callee who answered from a notification comes online. */
+  const readyRef = useRef<((p: { from: string }) => void) | null>(null);
 
   // Parents pass `onEnd` as an inline arrow, so its identity changes on EVERY parent
   // re-render. Keeping it in a ref (instead of the dependency array) stops the whole
@@ -121,6 +123,24 @@ export default function CallOverlay({
           // Also push an "incoming call" alert, so the callee is notified even if their app
           // is closed and no live socket is there to ring them.
           apiPost("/api/call/ring", { peerId }, getAccessToken() || undefined).catch(() => {});
+
+          /**
+           * If their app was closed, the offer above went to nobody — it is relayed live and
+           * not stored. Answering the native ringer opens their app, which then announces
+           * itself with "call:ready". That is our cue to send the offer a second time, to a
+           * socket that now actually exists.
+           */
+          readyRef.current = async (p: { from: string }) => {
+            if (p.from !== peerId || ended) return;
+            try {
+              const fresh = await pc.createOffer();
+              await pc.setLocalDescription(fresh);
+              sock.emit("call:signal", { to: peerId, type: "offer", sdp: fresh });
+            } catch (e) {
+              console.warn("[call] re-offer failed:", e);
+            }
+          };
+          sock.on("call:ready", readyRef.current);
         }
       } catch (err) {
         // Most often: the person blocked the microphone, or there is no mic at all.
@@ -144,6 +164,12 @@ export default function CallOverlay({
       try { pcRef.current?.close(); } catch {}
       localRef.current?.getTracks().forEach((t) => t.stop());
       if (handlerRef.current) sockRef.current?.off("call:signal", handlerRef.current);
+      if (readyRef.current) {
+        // `off` is typed against the call:signal payload; call:ready carries a different
+        // shape on the same socket, so the cast is the narrow, local escape hatch.
+        sockRef.current?.off("call:ready", readyRef.current as unknown as (p: Signal) => void);
+        readyRef.current = null;
+      }
       setCallSpeaker(false); // stop the silent keepalive tone so it never leaks past the call
     }
     return cleanup;

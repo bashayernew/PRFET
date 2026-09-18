@@ -128,6 +128,25 @@ export default function CallHost() {
 
       handlerRef.current = onSignal as unknown as (p: never) => void;
       s.on("call:signal", handlerRef.current);
+
+      /**
+       * Answered from the native ringer while the app was closed.
+       *
+       * The caller's original offer was relayed live to a socket that didn't exist yet, so
+       * it is gone. Now that we ARE connected, tell them to send it again — the handler
+       * above then treats it as a normal incoming call. `PrfetNative` only exists in the
+       * Android shell; on the web this is simply skipped.
+       */
+      try {
+        const native = (window as unknown as {
+          PrfetNative?: { pendingCall?: () => string; clearPendingCall?: () => void };
+        }).PrfetNative;
+        const callerId = native?.pendingCall?.();
+        if (callerId) {
+          native?.clearPendingCall?.(); // consume it, so a reload can't reopen the same call
+          s.emit("call:ready", { to: callerId });
+        }
+      } catch { /* not the native shell, or the bridge isn't registered yet */ }
     })();
 
     return () => {

@@ -155,6 +155,21 @@ app.prepare().then(() => {
       }
     });
 
+    /**
+     * "I answered your call from a notification — I'm connected now, send the offer again."
+     *
+     * When the callee's app was closed, the original offer was relayed to zero sockets and
+     * lost. Answering the native ringer opens the app, but by then there is nothing left to
+     * answer. So the callee announces itself the moment its socket is up and the caller
+     * re-sends. Without this the ringer opens an app that sits there doing nothing.
+     */
+    socket.on("call:ready", (p) => {
+      if (p && p.to) {
+        console.log(`[call] ready ${uid} -> ${p.to} (asking for a fresh offer)`);
+        io.to(p.to).emit("call:ready", { from: uid });
+      }
+    });
+
     socket.on("disconnect", () => {
       const n = (onlineCount.get(uid) || 1) - 1;
       if (n <= 0) {

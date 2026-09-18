@@ -65,3 +65,56 @@ export async function pushToUser(
     console.error("[fcm] send failed:", e);
   }
 }
+
+/**
+ * Ring a phone for an incoming call.
+ *
+ * Deliberately DATA-ONLY — no `notification` block. When a message carries one, Android
+ * draws it itself and never wakes our code while the app is backgrounded, so the full-screen
+ * ringer would never fire on a locked phone, which is the only case it exists for. A
+ * data-only message always reaches PrfetMessagingService.onMessageReceived.
+ *
+ * Also note `ttl: 0` — a call is worthless if it arrives after the caller has hung up, so
+ * FCM should drop it rather than queue it for a phone that is offline.
+ */
+export async function pushCall(
+  userId: string,
+  caller: { id: string; name: string; avatarUrl?: string | null }
+): Promise<void> {
+  const msg = await getMessaging();
+  if (!msg) return;
+
+  const rows = await prisma.deviceToken.findMany({ where: { userId }, select: { token: true } }).catch(() => []);
+  if (!rows.length) return;
+  const tokens = rows.map((r: { token: string }) => r.token);
+
+  try {
+    await msg.sendEachForMulticast({
+      tokens,
+      data: {
+        type: "incoming_call",
+        callerId: caller.id,
+        callerName: caller.name || "PRFET",
+        callerAvatar: caller.avatarUrl || "",
+      },
+      android: { priority: "high", ttl: 0 },
+    });
+  } catch (e) {
+    console.error("[fcm] call push failed:", e);
+  }
+}
+
+/** Stop a phone ringing — the caller hung up before it was answered. */
+export async function pushCallCancelled(userId: string): Promise<void> {
+  const msg = await getMessaging();
+  if (!msg) return;
+  const rows = await prisma.deviceToken.findMany({ where: { userId }, select: { token: true } }).catch(() => []);
+  if (!rows.length) return;
+  try {
+    await msg.sendEachForMulticast({
+      tokens: rows.map((r: { token: string }) => r.token),
+      data: { type: "call_cancelled" },
+      android: { priority: "high", ttl: 0 },
+    });
+  } catch { /* best effort — the ringer also stops on its own timeout */ }
+}
