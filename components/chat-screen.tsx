@@ -226,16 +226,41 @@ export default function ChatScreen({ id }: { id: string }) {
     );
   }
 
-  // View-once: reveal the media locally and tell the server it's been consumed.
+  /**
+   * View-once: reveal the media, tell the server it's consumed, then take it away again.
+   *
+   * The server already marks it expired, but that only takes effect on the NEXT load — so
+   * opening a view-once photo used to leave it sitting in the thread for as long as the chat
+   * stayed open. "View once" that you can stare at indefinitely isn't view once, and it's
+   * the behaviour the client reported.
+   *
+   * VIEW_SECONDS is the window; after it the message collapses to the same "expired" pill a
+   * reload would show, and it can't be reopened.
+   */
+  const VIEW_SECONDS = 15;
   const [openedOnce, setOpenedOnce] = useState<Set<string>>(new Set());
-  function openOnce(msgId: string) {
-    setOpenedOnce((s) => {
-      const next = new Set(s);
-      next.add(msgId);
-      return next;
-    });
-    apiPost(`/api/messages/${msgId}/viewed`, {}, getAccessToken() || undefined);
+  const [hiddenOnce, setHiddenOnce] = useState<Set<string>>(new Set());
+  const hideTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  function hideOnce(msgId: string) {
+    setHiddenOnce((s) => new Set(s).add(msgId));
+    const tm = hideTimers.current.get(msgId);
+    if (tm) { clearTimeout(tm); hideTimers.current.delete(msgId); }
   }
+
+  function openOnce(msgId: string) {
+    if (hiddenOnce.has(msgId)) return; // already consumed in this session
+    setOpenedOnce((s) => new Set(s).add(msgId));
+    apiPost(`/api/messages/${msgId}/viewed`, {}, getAccessToken() || undefined);
+    hideTimers.current.set(msgId, setTimeout(() => hideOnce(msgId), VIEW_SECONDS * 1000));
+  }
+
+  // Leaving the chat consumes anything still on screen — otherwise a pending timer is lost
+  // on unmount and the photo would be revealed again by the next render.
+  useEffect(() => {
+    const timers = hideTimers.current;
+    return () => { timers.forEach((tm) => clearTimeout(tm)); timers.clear(); };
+  }, []);
 
   // Persisted chat media settings.
   function toggleSaveMedia() {
@@ -477,7 +502,13 @@ export default function ChatScreen({ id }: { id: string }) {
                   {m.deleted ? (
                     <p className={`text-[13px] italic ${vip ? "opacity-70" : m.mine ? "text-brand-100" : "text-muted"}`}>{t("chat.deletedMsg")}</p>
                   ) : (
-                    <MessageBody m={m} t={t} opened={openedOnce.has(m.id)} onOpenOnce={() => openOnce(m.id)} />
+                    <MessageBody
+                      m={m}
+                      t={t}
+                      opened={openedOnce.has(m.id) && !hiddenOnce.has(m.id)}
+                      consumed={hiddenOnce.has(m.id)}
+                      onOpenOnce={() => openOnce(m.id)}
+                    />
                   )}
                   <p className={`mt-1 text-[10px] ${vip ? "opacity-60" : m.mine ? "text-brand-100" : "text-muted"}`} dir="ltr">{fmtTime(m.at, locale)}</p>
                 </div>
@@ -629,7 +660,7 @@ function ChatImage({ src, noSave }: { src: string; noSave: boolean }) {
   );
 }
 
-function MessageBody({ m, t, opened, onOpenOnce }: { m: Msg; t: (k: string) => string; opened?: boolean; onOpenOnce?: () => void }) {
+function MessageBody({ m, t, opened, consumed, onOpenOnce }: { m: Msg; t: (k: string) => string; opened?: boolean; consumed?: boolean; onOpenOnce?: () => void }) {
   const isMedia = (m.kind === "image" || m.kind === "video" || m.kind === "voice");
 
   // A finished call, shown the way a phone's call history does. `body` is the duration
@@ -650,7 +681,9 @@ function MessageBody({ m, t, opened, onOpenOnce }: { m: Msg; t: (k: string) => s
 
   // View-once handling for RECEIVED media.
   if (isMedia && m.viewOnce && !m.mine) {
-    if (m.expired && !opened) {
+    // `consumed` = watched here a moment ago and the viewing window closed.
+    // `m.expired` = the server already recorded it as viewed (so, a later visit).
+    if (consumed || (m.expired && !opened)) {
       return (
         <p className="flex items-center gap-1.5 text-[13px] italic text-muted">
           <EyeOff className="h-4 w-4" /> {t("chat.expiredMedia")}
