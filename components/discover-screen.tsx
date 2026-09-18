@@ -26,6 +26,10 @@ type DirUser = {
   dist: string | null;
   isPremium?: boolean;
   textColor?: string | null;
+  /** Hosting a live room right now — drives the LIVE badge. The API has always sent this
+   *  (app/api/users/route.ts), but it was missing here, so the badge only worked by accident:
+   *  next.config.ts sets typescript.ignoreBuildErrors, which shipped the error silently. */
+  live?: boolean;
 };
 
 export default function DiscoverScreen() {
@@ -38,6 +42,9 @@ export default function DiscoverScreen() {
   const [users, setUsers] = useState<DirUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false); // has the user pressed Search yet?
+  /** Shown while the OS is locating, and after a failure — the button used to do both silently. */
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState<string | null>(null);
   // false = we don't know where this phone is, so no distance can be shown
   const [hasOrigin, setHasOrigin] = useState(true);
 
@@ -190,15 +197,46 @@ export default function DiscoverScreen() {
   }
 
   // Ask for the phone's location, store it, and search again with real distances.
+  /**
+   * Ask the OS for a position, then store it so distances can be shown.
+   *
+   * Every branch here used to fail silently — no geolocation API, permission denied, GPS
+   * unavailable — so tapping "Enable" looked like a dead button. And with no `timeout`,
+   * Android's getCurrentPosition can hang indefinitely without ever calling EITHER callback,
+   * which is the same dead button with no way to tell the difference.
+   *
+   * Now: a visible busy state, a hard timeout, and a specific message per failure — because
+   * "turn on Location in Settings" and "we couldn't get a fix, try outdoors" are different
+   * problems and the user can only act on the right one.
+   */
   function enableLocation() {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return;
+    if (locating) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocError(t("discover.locUnsupported"));
+      return;
+    }
+    setLocError(null);
+    setLocating(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
+        setLocating(false);
         await apiPost("/api/location", { lat: pos.coords.latitude, lng: pos.coords.longitude }, getAccessToken() || undefined);
         sessionStorage.setItem("herot.geo", "1");
         runSearch();
       },
-      () => { /* denied — distances stay unknown */ }
+      (err) => {
+        setLocating(false);
+        // 1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE, 3 = TIMEOUT
+        setLocError(
+          err?.code === 1 ? t("discover.locDenied")
+            : err?.code === 3 ? t("discover.locTimeout")
+            : t("discover.locUnavailable")
+        );
+      },
+      // Without a timeout this call can never return on Android. A coarse fix is plenty for
+      // "how far away is this person", and accepting a 5-minute-old position makes it instant
+      // when the phone already knows where it is.
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
     );
   }
 
@@ -360,10 +398,18 @@ export default function DiscoverScreen() {
           </div>
         )}
         {!hasOrigin && (
-          <button onClick={enableLocation} className="mb-3 flex w-full items-center gap-2 rounded-2xl bg-amber-50 px-3.5 py-3 text-start ring-1 ring-amber-200 active:scale-[0.99]">
+          <button
+            onClick={enableLocation}
+            disabled={locating}
+            className="mb-3 flex w-full items-center gap-2 rounded-2xl bg-amber-50 px-3.5 py-3 text-start ring-1 ring-amber-200 active:scale-[0.99] disabled:opacity-70"
+          >
             <MapPin className="h-4 w-4 shrink-0 text-amber-600" />
-            <span className="flex-1 text-[12.5px] font-bold leading-snug text-amber-800">{t("discover.locationOff")}</span>
-            <span className="shrink-0 rounded-xl bg-amber-500 px-2.5 py-1 text-[11.5px] font-bold text-white">{t("discover.enableLocation")}</span>
+            <span className="flex-1 text-[12.5px] font-bold leading-snug text-amber-800">
+              {locError ?? t("discover.locationOff")}
+            </span>
+            <span className="shrink-0 rounded-xl bg-amber-500 px-2.5 py-1 text-[11.5px] font-bold text-white">
+              {locating ? t("discover.locating") : t("discover.enableLocation")}
+            </span>
           </button>
         )}
         {searched && !loading && (
