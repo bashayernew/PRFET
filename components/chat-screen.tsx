@@ -15,6 +15,9 @@ import {
   Square,
   ImageIcon,
   Video,
+  Camera,
+  Video as VideoIcon,
+  Film,
   MapPin,
   X,
   BookmarkMinus,
@@ -337,15 +340,30 @@ export default function ChatScreen({ id }: { id: string }) {
     await sendBody(v, "text");
   }
 
-  // Attach: image / video via real file upload; location via geolocation.
-  function pickFile(kind: "image" | "video") {
+  /**
+   * Attach media.
+   *
+   * `source` decides where it comes from. The `capture` attribute asks the phone to open the
+   * camera directly instead of the gallery — it is set per use and REMOVED for gallery picks,
+   * because leaving it on makes some Android builds refuse to offer the gallery at all.
+   *
+   * Desktop browsers ignore `capture` and just show the file dialog, so the camera tiles
+   * degrade harmlessly on the web.
+   */
+  function pickFile(kind: "image" | "video", source: "gallery" | "camera" = "gallery") {
     setAttachOpen(false);
     pendingKind.current = kind;
-    if (fileRef.current) {
-      fileRef.current.accept = kind === "image" ? "image/*" : "video/*";
-      fileRef.current.value = "";
-      fileRef.current.click();
+    const el = fileRef.current;
+    if (!el) return;
+    el.accept = kind === "image" ? "image/*" : "video/*";
+    if (source === "camera") {
+      // "environment" = rear camera; the user can still flip once it opens.
+      el.setAttribute("capture", "environment");
+    } else {
+      el.removeAttribute("capture");
     }
+    el.value = "";
+    el.click();
   }
 
   async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
@@ -579,9 +597,12 @@ export default function ChatScreen({ id }: { id: string }) {
       {/* attach sheet */}
       <Sheet open={attachOpen} onClose={() => setAttachOpen(false)} dir={dir} title={t("chat.attach")}>
         <div className="grid grid-cols-3 gap-3">
-          <AttachTile icon={<ImageIcon className="h-6 w-6" />} label={t("chat.attachImage")} tint="bg-brand-50 text-brand-600" onClick={() => pickFile("image")} />
-          <AttachTile icon={<Video className="h-6 w-6" />} label={t("chat.attachVideo")} tint="bg-rose-50 text-rose-600" onClick={() => pickFile("video")} />
+          {/* Camera first — taking a photo or clip is the common case in a chat. */}
+          <AttachTile icon={<Camera className="h-6 w-6" />} label={t("chat.takePhoto")} tint="bg-brand-50 text-brand-600" onClick={() => pickFile("image", "camera")} />
+          <AttachTile icon={<VideoIcon className="h-6 w-6" />} label={t("chat.recordVideo")} tint="bg-rose-50 text-rose-600" onClick={() => pickFile("video", "camera")} />
           <AttachTile icon={<MapPin className="h-6 w-6" />} label={t("chat.attachLocation")} tint="bg-emerald-50 text-emerald-600" onClick={shareLocation} />
+          <AttachTile icon={<ImageIcon className="h-6 w-6" />} label={t("chat.attachImage")} tint="bg-slate-100 text-slate-600" onClick={() => pickFile("image")} />
+          <AttachTile icon={<Film className="h-6 w-6" />} label={t("chat.attachVideo")} tint="bg-slate-100 text-slate-600" onClick={() => pickFile("video")} />
         </div>
       </Sheet>
 
