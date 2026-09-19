@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
+import { notify } from "@/lib/notify";
 
 const createSchema = z.object({
   title: z.string().min(2).max(120),
@@ -31,6 +32,34 @@ export async function GET(req: Request) {
     ? (await prisma.follow.findMany({ where: { userId: viewer }, select: { targetId: true } })).map((f) => f.targetId)
     : [];
 
+  /**
+   * Rooms this person was personally invited to.
+   *
+   * The followers rule below only reveals a followers-only room to people who FOLLOW the
+   * host — so someone the host hand-picked in the invite list never saw the room at all
+   * unless they happened to already follow them. They got a notification pointing at a room
+   * that wasn't in their list.
+   *
+   * There's no invite table; `inviteIds` only ever created notifications. That row is a
+   * perfectly good record of the invite, so it's used as one here rather than adding a
+   * model (schema.prisma has unrelated in-progress work that must not ship).
+   *
+   * An explicit invitation outranks privacy — including "hidden", because the host chose
+   * this person by hand.
+   */
+  const invitedTo = viewer
+    ? (await prisma.notification
+        .findMany({
+          where: { userId: viewer, kind: "meeting_invite", targetId: { not: null } },
+          select: { targetId: true },
+          orderBy: { createdAt: "desc" },
+          take: 200,
+        })
+        .catch(() => []))
+        .map((n: { targetId: string | null }) => n.targetId)
+        .filter((x): x is string => !!x)
+    : [];
+
   const meetings = await prisma.meeting.findMany({
     where: {
       status: "live",
@@ -43,6 +72,8 @@ export async function GET(req: Request) {
               { hostId: viewer },
               { privacy: { not: "hidden" }, followersOnly: false },
               { privacy: { not: "hidden" }, followersOnly: true, hostId: { in: iFollow } },
+              // personally invited — see it whatever the privacy setting
+              ...(invitedTo.length ? [{ id: { in: invitedTo } }] : []),
             ],
           }
         : { privacy: { not: "hidden" }, followersOnly: false }),
@@ -124,9 +155,15 @@ export async function POST(req: Request) {
   if (d.privacy !== "hidden") {
     const followers = await prisma.follow.findMany({ where: { targetId: payload.sub }, select: { userId: true } });
     if (followers.length) {
-      await prisma.notification
-        .createMany({ data: followers.map((f) => ({ userId: f.userId, kind: "went_live", data: meeting.title, actorId: payload.sub, targetId: meeting.id })) })
-        .catch(() => {});
+      // notify() rather than notification.createMany(): createMany only writes the in-app
+      // row, so the badge updated but no phone ever buzzed. notify() writes the same row AND
+      // sends the FCM + web pushes, which is what "tell my followers I'm live" has to mean
+      // for anyone who isn't already staring at the app.
+      await Promise.all(
+        followers.map((f: { userId: string }) =>
+          notify(f.userId, "went_live", { actorId: payload.sub, targetId: meeting.id, text: meeting.title })
+        )
+      ).catch(() => {});
       try {
         const io = (globalThis as unknown as { __herotIo?: { to: (r: string) => { emit: (e: string, p: unknown) => void } } }).__herotIo;
         if (io) followers.forEach((f) => io.to(f.userId).emit("user:live", { hostId: payload.sub, meetingId: meeting.id, title: meeting.title }));
@@ -138,9 +175,12 @@ export async function POST(req: Request) {
   if (d.inviteIds?.length) {
     const inviteIds = [...new Set(d.inviteIds)].filter((uid) => uid !== payload.sub).slice(0, 20);
     if (inviteIds.length) {
-      await prisma.notification
-        .createMany({ data: inviteIds.map((uid) => ({ userId: uid, kind: "meeting_invite", data: meeting.title, actorId: payload.sub, targetId: meeting.id })) })
-        .catch(() => {});
+      // Same reason as above — an invite nobody is pushed is an invite nobody sees.
+      await Promise.all(
+        inviteIds.map((uid) =>
+          notify(uid, "meeting_invite", { actorId: payload.sub, targetId: meeting.id, text: meeting.title })
+        )
+      ).catch(() => {});
     }
   }
 

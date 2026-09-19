@@ -64,6 +64,10 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   const [myCan, setMyCan] = useState({ audio: false, video: false, text: true, screen: false });
   const [sel, setSel] = useState<P | null>(null);
   const [copied, setCopied] = useState(false);
+  // Invite sheet: people the host follows, and who has already been sent an invite.
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [follows, setFollows] = useState<{ id: string; displayName: string; avatarUrl: string | null }[]>([]);
+  const [invited, setInvited] = useState<Record<string, boolean>>({});
   const [noRecording, setNoRecording] = useState(false);
   const [recAlert, setRecAlert] = useState<{ userId: string; name: string } | null>(null);
   const [tracks, setTracks] = useState<StageTrack[]>([]);
@@ -281,10 +285,30 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     } catch { /* unavailable */ }
   }
 
-  // No codes anymore — sharing just copies the plain room link. Public opens on tap;
-  // friends/private send the recipient to the gate to ask the host for approval.
+  /**
+   * Share opens a list of people you follow, so an invite can actually reach someone.
+   *
+   * It used to just copy the room link. A copied link notifies nobody, and for a host who is
+   * mid-broadcast and can't leave to paste it anywhere, it did nothing useful at all.
+   * Copy/native-share is still available inside the sheet for anyone who wants it.
+   */
   function shareRoom() {
-    pushLink(`${window.location.origin}/meetings/${id}`);
+    setInviteOpen(true);
+    if (follows.length) return; // already loaded this session
+    const token = getAccessToken();
+    if (!token) return;
+    apiGet<{ targets: { id: string; displayName: string; avatarUrl: string | null }[] }>("/api/follows?full=1", token)
+      .then((res) => { if (res.ok && res.data?.targets) setFollows(res.data.targets); });
+  }
+
+  async function inviteTo(userId: string) {
+    if (invited[userId]) return;
+    setInvited((s) => ({ ...s, [userId]: true })); // optimistic — the tick shouldn't wait on the network
+    const res = await apiPost(`/api/meetings/${id}/invite`, { userIds: [userId] }, getAccessToken() || undefined);
+    if (!res.ok) {
+      setInvited((s) => ({ ...s, [userId]: false }));
+      toast(t("common.error"));
+    }
   }
 
   async function decideJoin(userId: string, allow: boolean) {
@@ -685,6 +709,57 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {inviteOpen && (
+        <div dir={dir} className="fixed inset-0 z-[70] flex items-end justify-center bg-black/60" onClick={() => setInviteOpen(false)}>
+          <motion.div
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            transition={{ type: "spring", damping: 30, stiffness: 300 }}
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[70dvh] w-full max-w-[480px] flex-col rounded-t-3xl bg-white"
+          >
+            <div className="shrink-0 border-b border-slate-100 py-3.5 text-center">
+              <p className="text-[14.5px] font-extrabold text-ink">{t("meet.invite")}</p>
+            </div>
+
+            <div className="no-scrollbar flex-1 overflow-y-auto px-4 py-3">
+              {follows.length === 0 ? (
+                <p className="py-8 text-center text-[13px] font-medium text-muted">{t("post.noFollowing")}</p>
+              ) : (
+                follows.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => inviteTo(p.id)}
+                    className="flex w-full items-center gap-3 py-2.5 text-start active:scale-[0.99]"
+                  >
+                    <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-slate-200 text-[13px] font-extrabold text-slate-500">
+                      {p.avatarUrl
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={p.avatarUrl} alt="" className="h-10 w-10 object-cover" />
+                        : p.displayName.slice(0, 1)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink">{p.displayName}</span>
+                    <span className={`shrink-0 rounded-xl px-3 py-1.5 text-[11.5px] font-extrabold ${invited[p.id] ? "bg-emerald-50 text-emerald-600" : "bg-brand-600 text-white"}`}>
+                      {invited[p.id] ? t("meet.invited") : t("meet.inviteSend")}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <div className="shrink-0 border-t border-slate-100 p-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
+              <button
+                onClick={() => pushLink(`${window.location.origin}/meetings/${id}`)}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-100 py-3 text-[13px] font-extrabold text-ink active:scale-95"
+              >
+                {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Share2 className="h-4 w-4" />}
+                {copied ? t("post.copied") : t("post.copyLink")}
+              </button>
+            </div>
+          </motion.div>
         </div>
       )}
 

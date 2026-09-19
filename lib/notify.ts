@@ -23,7 +23,7 @@ export type NotifyOpts = {
 function linkFor(kind: string, targetId?: string | null, actorId?: string | null) {
   if (kind === "new_message" || kind === "missed_call" || kind === "incoming_call" || kind === "gift_premium") return actorId ? `/messages/${actorId}` : "/messages";
   if (kind.startsWith("post_")) return targetId ? `/post/${targetId}` : "/home";
-  if (kind === "meeting_invite") return targetId ? `/meetings/${targetId}` : "/meetings";
+  if (kind === "meeting_invite" || kind === "went_live") return targetId ? `/meetings/${targetId}` : "/meetings";
   if (kind === "job_application") return targetId ? `/job/${targetId}` : "/jobs";
   if (kind === "new_follower") return actorId ? `/business/${actorId}` : "/notifications";
   if (kind === "ad_review") return "/ads";
@@ -47,6 +47,8 @@ function phrase(kind: string, locale: string, actor: string, text?: string | nul
       return { title: ar ? "إعادة نشر" : "Repost", body: ar ? `${actor} أعاد نشر منشورك` : `${actor} reposted your post` };
     case "meeting_invite":
       return { title: ar ? "دعوة لغرفة" : "Room invite", body: ar ? `${actor} دعاك إلى «${cut(text)}»` : `${actor} invited you to “${cut(text)}”` };
+    case "went_live":
+      return { title: ar ? "بث مباشر الآن 🔴" : "Live now 🔴", body: ar ? `${actor} بدأ بثاً مباشراً: «${cut(text)}»` : `${actor} started a live: “${cut(text)}”` };
     case "missed_call":
       return { title: ar ? "مكالمة فائتة" : "Missed call", body: ar ? `مكالمة فائتة من ${actor}` : `Missed call from ${actor}` };
     case "incoming_call":
