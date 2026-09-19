@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { hashPassword, generateOtp, randomOtp, sha256, normalizePhone } from "@/lib/auth";
+import { hashPassword, randomOtp, sha256, normalizePhone } from "@/lib/auth";
 import { sendOtpEmail } from "@/lib/email";
+import { sendOtpSms } from "@/lib/sms";
 import { isCountryClosed } from "@/lib/closed";
 
 const phoneRe = /^\+?[0-9]{7,15}$/;
@@ -119,8 +120,9 @@ export async function POST(req: Request) {
 
   await prisma.notification.create({ data: { userId: user.id, kind: "welcome" } });
 
-  // Email accounts get a real random code by email; phone keeps the on-screen code until SMS is wired.
-  const code = email ? randomOtp() : generateOtp();
+  // Same random 4-digit code whichever channel delivers it — generateOtp and randomOtp
+  // were always identical, and the ternary only made it look like phone was special-cased.
+  const code = randomOtp();
   await prisma.otpCode.create({
     data: {
       userId: user.id,
@@ -130,7 +132,10 @@ export async function POST(req: Request) {
     },
   });
 
-  // Deliver the code by email. The code is never returned to the client.
+  // Deliver the code, by whichever channel they registered with. The code is never
+  // returned to the client. Phone used to fall through here with no delivery at all —
+  // a hashed code was stored that the user had no way of ever receiving.
   if (email) await sendOtpEmail(email, code, "verify");
+  else if (phone) await sendOtpSms(phone, code, "verify");
   return NextResponse.json({ ok: true }, { status: 201 });
 }

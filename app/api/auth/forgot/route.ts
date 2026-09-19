@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { generateOtp, randomOtp, sha256, identifierWhere } from "@/lib/auth";
+import { randomOtp, sha256, identifierWhere } from "@/lib/auth";
 import { sendOtpEmail } from "@/lib/email";
+import { sendOtpSms } from "@/lib/sms";
 import { otpGuard, otpSent } from "@/lib/otp-guard";
 
 const schema = z.object({ identifier: z.string().min(3) });
@@ -26,12 +27,13 @@ export async function POST(req: Request) {
   // Throttle BEFORE issuing a code — this endpoint mails anyone who knows an address.
   // Keep answering 200 so we still don't leak which accounts exist; the client just
   // won't get another mail until the cooldown passes.
-  if (user.email) {
-    const guard = otpGuard(req, user.email);
+  const dest = user.email || user.phone;
+  if (dest) {
+    const guard = otpGuard(req, dest);
     if (!guard.ok) return NextResponse.json({ ok: true, retryAfter: guard.retryAfter });
   }
 
-  const code = user.email ? randomOtp() : generateOtp();
+  const code = randomOtp();
   await prisma.otpCode.create({
     data: {
       userId: user.id,
@@ -43,6 +45,9 @@ export async function POST(req: Request) {
   if (user.email) {
     await sendOtpEmail(user.email, code, "reset");
     otpSent(req, user.email);
+  } else if (user.phone) {
+    await sendOtpSms(user.phone, code, "reset");
+    otpSent(req, user.phone);
   }
   return NextResponse.json({ ok: true });
 }

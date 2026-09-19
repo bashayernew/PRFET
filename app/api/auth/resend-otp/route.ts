@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { generateOtp, randomOtp, sha256, identifierWhere } from "@/lib/auth";
+import { randomOtp, sha256, identifierWhere } from "@/lib/auth";
 import { sendOtpEmail } from "@/lib/email";
+import { sendOtpSms } from "@/lib/sms";
 import { otpGuard, otpSent } from "@/lib/otp-guard";
 
 const schema = z.object({ identifier: z.string().min(3) });
@@ -24,15 +25,18 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ ok: true });
 
   // Throttle BEFORE issuing a code. Unlimited resends here is what made the email
-  // provider read our traffic as spam; see lib/otp-guard.ts.
-  if (user.email) {
-    const guard = otpGuard(req, user.email);
+  // provider read our traffic as spam; see lib/otp-guard.ts. Phone numbers are guarded
+  // the same way — SMS costs real money per message, so an unthrottled resend is worse
+  // here than it ever was for email.
+  const dest = user.email || user.phone;
+  if (dest) {
+    const guard = otpGuard(req, dest);
     if (!guard.ok) {
       return NextResponse.json({ error: "rate_limited", retryAfter: guard.retryAfter }, { status: 429 });
     }
   }
 
-  const code = user.email ? randomOtp() : generateOtp();
+  const code = randomOtp();
   await prisma.otpCode.create({
     data: {
       userId: user.id,
@@ -44,6 +48,9 @@ export async function POST(req: Request) {
   if (user.email) {
     await sendOtpEmail(user.email, code, "verify");
     otpSent(req, user.email);
+  } else if (user.phone) {
+    await sendOtpSms(user.phone, code, "verify");
+    otpSent(req, user.phone);
   }
   return NextResponse.json({ ok: true });
 }

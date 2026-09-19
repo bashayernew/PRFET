@@ -36,6 +36,55 @@ export default function CallHost() {
   // browser's autoplay policy when a call arrives later.
   useEffect(() => { wireAudioUnlock(); }, []);
 
+  /** Waiting for the caller to re-send their offer after we answered from the ringer. */
+  const [reconnecting, setReconnecting] = useState(false);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Pick up a call answered from the native notification.
+   *
+   * The caller's original offer was relayed live to a socket that didn't exist yet, so it's
+   * gone — signalling isn't stored. Announcing ourselves with "call:ready" asks the caller to
+   * send a fresh one, which the handler above then treats as a normal incoming call.
+   *
+   * This MUST run on more than socket-connect. Answering usually happens while the app is
+   * already alive in the background: the socket is long since connected, that effect never
+   * re-runs, and the caller id set by onNewIntent is never read — so Answer opened the app
+   * and did nothing at all. Checking again whenever the page becomes visible covers it.
+   *
+   * `PrfetNative` exists only in the Android shell; on the web this is a no-op.
+   */
+  const claimPendingCall = useCallback(() => {
+    try {
+      const native = (window as unknown as {
+        PrfetNative?: { pendingCall?: () => string; clearPendingCall?: () => void };
+      }).PrfetNative;
+      const callerId = native?.pendingCall?.();
+      if (!callerId) return;
+      native?.clearPendingCall?.(); // consume it, so a reload can't reopen the same call
+      if (!sockRef.current) return;
+      sockRef.current.emit("call:ready", { to: callerId });
+
+      // Tell the user something is happening. Without this the screen just sits there
+      // while we wait on the caller, which is indistinguishable from a dead button.
+      setReconnecting(true);
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = setTimeout(() => setReconnecting(false), 20_000);
+    } catch { /* not the native shell, or the bridge isn't registered yet */ }
+  }, []);
+
+  // Answering brings the app to the foreground — that's our cue to look again.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible") claimPendingCall(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", claimPendingCall);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", claimPendingCall);
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    };
+  }, [claimPendingCall]);
+
   const stopRing = useCallback(() => {
     ringRef.current?.stop();
     ringRef.current = null;
@@ -89,6 +138,7 @@ export default function CallHost() {
         if (p.type === "offer") {
           // already busy? politely refuse
           if (ringRef.current || acceptedRef.current) { s.emit("call:signal", { to: p.from, type: "end" }); return; }
+          setReconnecting(false); // the re-offer we asked for has arrived
           iceBufRef.current = [];
           // Show the ringing screen immediately so ICE buffering can start; the name is
           // filled in a moment later once the profile lookup returns.
@@ -129,24 +179,7 @@ export default function CallHost() {
       handlerRef.current = onSignal as unknown as (p: never) => void;
       s.on("call:signal", handlerRef.current);
 
-      /**
-       * Answered from the native ringer while the app was closed.
-       *
-       * The caller's original offer was relayed live to a socket that didn't exist yet, so
-       * it is gone. Now that we ARE connected, tell them to send it again — the handler
-       * above then treats it as a normal incoming call. `PrfetNative` only exists in the
-       * Android shell; on the web this is simply skipped.
-       */
-      try {
-        const native = (window as unknown as {
-          PrfetNative?: { pendingCall?: () => string; clearPendingCall?: () => void };
-        }).PrfetNative;
-        const callerId = native?.pendingCall?.();
-        if (callerId) {
-          native?.clearPendingCall?.(); // consume it, so a reload can't reopen the same call
-          s.emit("call:ready", { to: callerId });
-        }
-      } catch { /* not the native shell, or the bridge isn't registered yet */ }
+      claimPendingCall(); // cold start: answered while the app wasn't running
     })();
 
     return () => {
@@ -198,6 +231,19 @@ export default function CallHost() {
         initialIce={pendingIce}
         onEnd={() => { acceptedRef.current = null; setAccepted(null); setPendingIce([]); }}
       />
+    );
+  }
+
+  // Answered from the notification, waiting on the caller's fresh offer. Without this the
+  // app opened to whatever screen was last shown and looked like the button did nothing.
+  if (!incoming && reconnecting) {
+    return (
+      <div dir={dir} className="fixed inset-0 z-[70] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-4 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
+        <span className="grid h-20 w-20 animate-pulse place-items-center rounded-full bg-white/15">
+          <Phone className="h-8 w-8" />
+        </span>
+        <p className="animate-pulse text-[15px] font-extrabold">{t("call.connecting")}</p>
+      </div>
     );
   }
 
