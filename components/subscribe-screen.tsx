@@ -7,6 +7,8 @@ import { useI18n } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiPost, apiGet, getAccessToken } from "@/lib/api";
 import { useFastSpring, fastspringEnabled, FS_PATHS } from "@/components/fastspring-checkout";
+import { isNative, initPurchases, buy, restore } from "@/lib/iap";
+import { SUB_PRODUCTS, ADDON_PRODUCTS } from "@/lib/iap-products";
 
 // Fill {placeholders} in a translated string with live numbers from the dashboard settings.
 const fill = (str: string, vars: Record<string, number | string>) =>
@@ -32,11 +34,22 @@ export default function SubscribeScreen() {
   const [toast, setToast] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
   const [uid, setUid] = useState("");
+  /** Running inside the Capacitor shell — decides store checkout vs web checkout. */
+  const [native, setNative] = useState(false);
   const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
     apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
       if (r.ok && r.data?.user) setUid(r.data.user.id);
+    });
+    // RevenueCat has to know which account is buying, or the webhook can't attribute the
+    // purchase to anyone. isNative() is false on the web, where this whole path is skipped.
+    isNative().then((n) => {
+      setNative(n);
+      if (!n) return;
+      apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
+        if (r.ok && r.data?.user?.id) initPurchases(r.data.user.id);
+      });
     });
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
@@ -60,9 +73,20 @@ export default function SubscribeScreen() {
 
   const price = tier === "vip" ? vipMonthly : goldMonthly;
 
-  // With FastSpring configured, tapping an add-on opens the card checkout; the webhook credits
-  // the pack after payment. Without it, we fall back to the temporary self-serve grant.
+  /**
+   * Add-ons. Inside the native app this MUST go through the store — see buyPlan below.
+   */
   async function buyAddon(pack: "voice" | "media" | "storage") {
+    if (native) {
+      if (buying) return;
+      setBuying(true);
+      const res = await buy(ADDON_PRODUCTS[pack], getAccessToken() || "");
+      setBuying(false);
+      if (res.cancelled) return;
+      setToast(res.ok ? t("premium.paidThanks") : t("common.error"));
+      setTimeout(() => setToast(null), 2600);
+      return;
+    }
     if (fastspringEnabled) { checkout(FS_PATHS[pack], uid); return; }
     if (buying) return;
     setBuying(true);
@@ -72,10 +96,42 @@ export default function SubscribeScreen() {
     setTimeout(() => setToast(null), 2200);
   }
 
-  // Subscribe to the selected plan via FastSpring card checkout (or contact-admin fallback).
-  function buyPlan() {
+  /**
+   * Subscribe to the selected plan.
+   *
+   * Inside the native app this goes through Play Billing (via RevenueCat) and NOT FastSpring.
+   * That isn't a preference — Google requires digital goods sold inside an Android app to use
+   * Play Billing, and routing subscriptions to an external card checkout is the kind of
+   * violation apps get pulled from the store for. On the web, where Play policy doesn't
+   * apply, FastSpring stays.
+   *
+   * Premium is never granted from here. `buy()` only presents the store sheet; entitlement
+   * arrives server-side from the RevenueCat webhook, so a tampered client can't grant itself
+   * anything.
+   */
+  async function buyPlan() {
+    if (native) {
+      if (buying) return;
+      setBuying(true);
+      const res = await buy(tier === "vip" ? SUB_PRODUCTS.vip1m : SUB_PRODUCTS.basic1m, getAccessToken() || "");
+      setBuying(false);
+      if (res.cancelled) return; // user backed out of the store sheet — not an error
+      setToast(res.ok ? t("premium.paidThanks") : t("common.error"));
+      setTimeout(() => setToast(null), 3500);
+      return;
+    }
     if (fastspringEnabled) { checkout(tier === "vip" ? FS_PATHS.vip : FS_PATHS.golden, uid); return; }
     router.push("/contact");
+  }
+
+  /** Re-attach a subscription bought on another device or after a reinstall. */
+  async function restorePurchases() {
+    if (buying) return;
+    setBuying(true);
+    const ok = await restore(getAccessToken() || "");
+    setBuying(false);
+    setToast(ok ? t("wallet.restored") : t("common.error"));
+    setTimeout(() => setToast(null), 2600);
   }
 
   if (!ready) return null;
@@ -157,14 +213,24 @@ export default function SubscribeScreen() {
             <p className="text-[14px] font-extrabold text-ink">{t("premium.payVia")}</p>
           </div>
           <p className="text-[12.5px] font-medium leading-relaxed text-muted">{t("premium.payViaHint")}</p>
-          {fastspringEnabled ? (
+          {/* In the app the button is always shown — Play Billing is always available there.
+              On the web it depends on FastSpring being configured. */}
+          {native || fastspringEnabled ? (
             <>
               <button
                 onClick={buyPlan}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 py-3.5 text-[14px] font-extrabold text-white active:scale-95"
+                disabled={buying}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 py-3.5 text-[14px] font-extrabold text-white disabled:opacity-60 active:scale-95"
               >
                 <Crown className="h-4 w-4" /> {t("premium.subscribeCard").replace("{price}", `$${price}`)}
               </button>
+              {/* Stores require a visible way to restore a purchase — without it, anyone who
+                  reinstalls or changes phone loses what they paid for, and review flags it. */}
+              {native && (
+                <button onClick={restorePurchases} disabled={buying} className="mt-2 w-full text-center text-[12px] font-bold text-brand-600 disabled:opacity-60">
+                  {t("wallet.restore")}
+                </button>
+              )}
               <button onClick={() => router.push("/contact")} className="mt-2 w-full text-center text-[12px] font-bold text-muted">
                 {t("premium.contactAdmin")}
               </button>
