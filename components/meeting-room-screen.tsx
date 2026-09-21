@@ -225,13 +225,21 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         setChat((c) => [...c, { userId: p.userId ?? "", name: p.name ?? "", avatarUrl: p.avatarUrl ?? null, body: p.body!, at: p.at ?? Date.now() }]);
       });
       sock.on("meeting:ended", (p: { meetingId?: string }) => {
-        if (p?.meetingId === id) { alert(t("meet.ended")); router.push("/meetings"); }
+        if (p?.meetingId !== id) return;
+        // NOT alert(): it blocks the JS thread until dismissed, and in an Android WebView
+        // that dialog sometimes never renders — so router.push() below never ran and the
+        // room stayed frozen on screen after the host ended it. Navigate first, tell them
+        // second, with a toast that can't block anything.
+        toast(t("meet.ended"));
+        router.push("/meetings");
       });
       sock.on("meeting:recording", (p: { meetingId?: string; userId?: string; name?: string }) => {
         if (p?.meetingId === id && p?.userId) setRecAlert({ userId: p.userId, name: p.name || p.userId });
       });
       sock.on("meeting:kicked", (p: { meetingId?: string }) => {
-        if (p?.meetingId === id) { alert(t("meet.youWereKicked")); router.push("/meetings"); }
+        if (p?.meetingId !== id) return;
+        toast(t("meet.youWereKicked")); // same reason as meeting:ended — never block on alert()
+        router.push("/meetings");
       });
       sock.on("meeting:request", (p: { meetingId?: string; userId?: string; want?: string | null }) => {
         if (p?.meetingId !== id || !p.userId) return;
