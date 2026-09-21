@@ -81,6 +81,28 @@ app.prepare().then(() => {
 
   const onlineCount = new Map(); // userId -> active socket count
 
+  /**
+   * Recent comments per live room, so joining (or reconnecting) doesn't mean silence.
+   *
+   * Room chat is relayed, never stored — which meant anything sent while a viewer's socket
+   * was momentarily reconnecting was lost for good, and someone arriving mid-broadcast saw
+   * an empty panel under a busy conversation. Sockets here use long-polling with automatic
+   * reconnection, so those gaps are routine rather than rare.
+   *
+   * In memory on purpose: these are throwaway messages for a room that ends in an hour, and
+   * writing every comment to Postgres would put the whole feature on the database's
+   * critical path. Capped per room, and dropped when the room ends.
+   */
+  const meetChat = new Map(); // meetingId -> [{ userId, name, avatarUrl, body, at }]
+  const MEET_CHAT_KEEP = 50;
+
+  function rememberChat(mid, msg) {
+    const list = meetChat.get(mid) || [];
+    list.push(msg);
+    if (list.length > MEET_CHAT_KEEP) list.splice(0, list.length - MEET_CHAT_KEEP);
+    meetChat.set(mid, list);
+  }
+
   // JWT handshake — only authenticated users get a socket.
   io.use((socket, nextFn) => {
     try {
@@ -128,6 +150,11 @@ app.prepare().then(() => {
         .catch(() => null);
       if (part && part.kicked) return; // removed by the host — stay out
       socket.join(`meet:${mid}`);
+
+      // Catch them up. Joining is idempotent and the client re-emits it before sending, so
+      // this also repairs a socket that reconnected and silently missed messages.
+      const history = meetChat.get(mid);
+      if (history && history.length) socket.emit("meeting:chatHistory", { meetingId: mid, messages: history });
     });
 
     socket.on("meeting:leaveRoom", (p) => {
@@ -174,14 +201,15 @@ app.prepare().then(() => {
       // the message never being sent.
       const room = io.sockets.adapter.rooms.get(`meet:${mid}`);
       console.log(`[meet] chat ${uid} -> ${mid} | listeners: ${room ? room.size : 0}`);
-      io.to(`meet:${mid}`).emit("meeting:chat", {
-        meetingId: mid,
+      const msg = {
         userId: uid,
         name: (u && u.displayName) || uid,
         avatarUrl: (u && u.avatarUrl) || null,
         body,
         at: Date.now(),
-      });
+      };
+      rememberChat(mid, msg);
+      io.to(`meet:${mid}`).emit("meeting:chat", { meetingId: mid, ...msg });
     });
 
     // WebRTC signaling relay for 1:1 calls (offer/answer/ICE) — used by the calls feature.
@@ -227,7 +255,7 @@ app.prepare().then(() => {
             const hosted = await prisma.meeting.findMany({ where: { hostId: uid, status: "live" }, select: { id: true } });
             if (hosted.length) {
               await prisma.meeting.updateMany({ where: { id: { in: hosted.map((m) => m.id) } }, data: { status: "ended" } });
-              hosted.forEach((m) => io.to(`meet:${m.id}`).emit("meeting:ended", { meetingId: m.id }));
+              hosted.forEach((m) => { io.to(`meet:${m.id}`).emit("meeting:ended", { meetingId: m.id }); meetChat.delete(m.id); });
             }
             await prisma.meetingParticipant.deleteMany({ where: { userId: uid, meeting: { status: "live" } } });
           } catch { /* best effort */ }
@@ -246,7 +274,7 @@ app.prepare().then(() => {
       if (!due.length) return;
       const ids = due.map((m) => m.id);
       await prisma.meeting.updateMany({ where: { id: { in: ids } }, data: { status: "ended" } });
-      ids.forEach((mid) => io.to(`meet:${mid}`).emit("meeting:ended", { meetingId: mid }));
+      ids.forEach((mid) => { io.to(`meet:${mid}`).emit("meeting:ended", { meetingId: mid }); meetChat.delete(mid); }); // free the chat buffer
       console.log(`> meetings: ended ${ids.length} expired room(s)`);
     } catch (e) {
       console.error("meetings sweep failed", e && e.message);

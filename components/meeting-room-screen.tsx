@@ -228,6 +228,25 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
       s = sock;
       sockRef.current = sock as unknown as Sock;
       sock.emit("meeting:join", { meetingId: id });
+      /**
+       * The last ~50 comments, sent when we join or rejoin.
+       *
+       * Room chat is relayed and not stored, so anything sent while this socket was
+       * reconnecting simply never arrived — comments "went missing" for no visible reason.
+       * Merged rather than replaced, and de-duplicated on sender+time+text so the messages
+       * already on screen (including our own optimistic ones) don't appear twice.
+       */
+      sock.on("meeting:chatHistory", (p: { meetingId?: string; messages?: { userId: string; name: string; avatarUrl: string | null; body: string; at: number }[] }) => {
+        if (p?.meetingId !== id || !Array.isArray(p.messages)) return;
+        setChat((cur) => {
+          const key = (m: { userId: string; body: string; at: number }) => `${m.userId}|${m.at}|${m.body}`;
+          const seen = new Set(cur.map(key));
+          const merged = [...cur, ...p.messages!.filter((m) => !seen.has(key(m)))];
+          merged.sort((a, b) => a.at - b.at);
+          return merged;
+        });
+      });
+
       sock.on("meeting:chat", (p: { meetingId?: string; userId?: string; name?: string; avatarUrl?: string | null; body?: string; at?: number }) => {
         if (p?.meetingId !== id || !p.body) return;
         // My own messages are shown instantly by sendChat — ignore the echo so they don't double.
@@ -331,7 +350,7 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         (s as unknown as Sock).emit?.("meeting:leaveRoom", { meetingId: id });
         s.off("meeting:recording"); s.off("meeting:kicked"); s.off("meeting:request"); s.off("meeting:granted");
         s.off("meeting:stage"); s.off("meeting:joinRequest"); s.off("meeting:joinDecision");
-        s.off("meeting:chat"); s.off("meeting:ended");
+        s.off("meeting:chat"); s.off("meeting:chatHistory"); s.off("meeting:ended");
       }
       sockRef.current = null;
     };
