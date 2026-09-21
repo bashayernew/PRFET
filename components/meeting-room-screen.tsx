@@ -259,9 +259,54 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         if (p?.meetingId !== id || !p.kind) return;
         setMyWant(null);
         setMyCan((c) => ({ ...c, [p.kind as "audio" | "video" | "text" | "screen"]: !!p.allow }));
-        if (p.kind === "audio" && p.allow) { setMyState("talking"); roomRef.current?.setMic(true).catch(() => {}); }
-        if (p.kind === "video" && !p.allow) { setMyVideo(false); roomRef.current?.setCamera(false).catch(() => {}); }
-        if (p.kind === "screen" && !p.allow) { setMyScreen(false); roomRef.current?.setScreen(false).catch(() => {}); }
+
+        /**
+         * Approval opens the thing immediately — the point of asking was to use it, and
+         * making someone hunt for the button again after the host said yes is a second
+         * hurdle for no reason.
+         *
+         * Failures are surfaced rather than swallowed. `.catch(() => {})` meant a blocked
+         * microphone looked identical to the host ignoring the request.
+         */
+        if (p.kind === "audio") {
+          if (p.allow) {
+            setMyState("talking");
+            roomRef.current?.setMic(true).catch((e) => {
+              console.warn("[meet] mic failed after grant:", e);
+              setMyState("muted");
+              toast(t("meet.micFailed"));
+            });
+          } else {
+            setMyState("muted");
+            roomRef.current?.setMic(false).catch(() => {});
+          }
+        }
+
+        if (p.kind === "video") {
+          if (p.allow) {
+            setMyVideo(true);
+            roomRef.current?.setCamera(true).catch((e) => {
+              console.warn("[meet] camera failed after grant:", e);
+              setMyVideo(false);
+              toast(t("meet.camFailed"));
+            });
+          } else {
+            setMyVideo(false);
+            roomRef.current?.setCamera(false).catch(() => {});
+          }
+        }
+
+        if (p.kind === "screen") {
+          if (p.allow) {
+            // NOT auto-started: browsers only allow getDisplayMedia from a real user
+            // gesture, so starting it from a socket event is rejected every time. Tell them
+            // it's unlocked instead — and on a phone it can't work at all.
+            toast(screenShareSupported() ? t("meet.screenNowAllowed") : t("meet.screenUnsupported"));
+          } else {
+            setMyScreen(false);
+            roomRef.current?.setScreen(false).catch(() => {});
+          }
+        }
       });
       sock.on("meeting:joinRequest", (p: { meetingId?: string; userId?: string; name?: string; avatarUrl?: string | null }) => {
         if (p?.meetingId !== id || !p.userId) return;
