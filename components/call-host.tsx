@@ -40,6 +40,12 @@ export default function CallHost() {
   const [reconnecting, setReconnecting] = useState(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Stop asking the caller for a fresh offer, and clear the waiting screen. */
+  const stopReconnect = useCallback(() => {
+    if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+    setReconnecting(false);
+  }, []);
+
   /**
    * Pick up a call answered from the native notification.
    *
@@ -86,24 +92,34 @@ export default function CallHost() {
             s.emit("call:ready", { to: callerId });
           }
         } catch { /* socket not up yet — the next tick tries again */ }
-        if (tries >= 7) { // ~14s, then give up and let them out
-          setReconnecting(false);
-          return;
-        }
+        if (tries >= 7) { stopReconnect(); return; } // ~14s, then give up and let them out
         reconnectTimer.current = setTimeout(ask, 2000);
       };
       ask();
     } catch { /* not the native shell, or the bridge isn't registered yet */ }
-  }, []);
+  }, [stopReconnect]);
 
-  // Answering brings the app to the foreground — that's our cue to look again.
+  /**
+   * Watch for a call answered from the native notification.
+   *
+   * Polled, not event-driven. Answering while the app is ALREADY open and in the foreground
+   * fires Android's onNewIntent but produces no visibilitychange and no window focus event —
+   * the page never went away — so an event-based check never ran and the button appeared
+   * dead. The events are still handled for the cold-start and background cases, where they
+   * fire sooner than the next tick.
+   *
+   * `pendingCall()` is a synchronous JavaScript-bridge read of one string, so a one-second
+   * poll costs nothing. On the web `PrfetNative` doesn't exist and this returns immediately.
+   */
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") claimPendingCall(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", claimPendingCall);
+    const poll = setInterval(claimPendingCall, 1000);
     return () => {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("focus", claimPendingCall);
+      clearInterval(poll);
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };
   }, [claimPendingCall]);
@@ -159,12 +175,20 @@ export default function CallHost() {
         if (!p?.from) return;
 
         if (p.type === "offer") {
-          // already busy? politely refuse
+          /**
+           * A repeat offer from the person we're ALREADY ringing with or talking to is a
+           * retry, not a second caller — we asked for it ourselves via "call:ready", which
+           * is sent several times because a single request is lost if either socket is
+           * reconnecting. Answering it with "end" would hang up the very call we just
+           * picked up. Ignore it and stop asking.
+           */
+          const busyWith = acceptedRef.current?.from ?? incomingRef.current?.from ?? null;
+          if (busyWith === p.from) { stopReconnect(); return; }
+
+          // A genuinely different caller while we're occupied — politely refuse.
           if (ringRef.current || acceptedRef.current) { s.emit("call:signal", { to: p.from, type: "end" }); return; }
-          // The re-offer we asked for has arrived — stop asking, and stop the timer too or
-          // it keeps pinging the caller through the call we just connected.
-          setReconnecting(false);
-          if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+
+          stopReconnect(); // the re-offer we asked for has arrived
           iceBufRef.current = [];
           // Show the ringing screen immediately so ICE buffering can start; the name is
           // filled in a moment later once the profile lookup returns.
@@ -272,10 +296,7 @@ export default function CallHost() {
         {/* An escape hatch. The caller may already have hung up, in which case no offer is
             ever coming — without this the screen just sat there and trapped the person. */}
         <button
-          onClick={() => {
-            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-            setReconnecting(false);
-          }}
+          onClick={stopReconnect}
           className="mt-6 flex flex-col items-center gap-2 active:scale-95"
         >
           <span className="grid h-14 w-14 place-items-center rounded-full bg-red-500"><PhoneOff className="h-6 w-6" /></span>
