@@ -226,6 +226,13 @@ export default function CallOverlay({
 
   function hangUp() {
     sockRef.current?.emit("call:signal", { to: peerId, type: "end" });
+    // The socket "end" above only reaches a phone that HAS a socket. If their app is closed
+    // it never arrives and their notification keeps ringing at a call that no longer exists
+    // — so also push a silent cancel. Skipped once we're actually talking, since by then
+    // they're demonstrably connected.
+    if (status !== "in-call") {
+      apiPost("/api/call/cancel", { peerId }, getAccessToken() || undefined).catch(() => {});
+    }
     logCall(!incomingOffer);
     onEnd();
   }
