@@ -62,14 +62,37 @@ export default function CallHost() {
       const callerId = native?.pendingCall?.();
       if (!callerId) return;
       native?.clearPendingCall?.(); // consume it, so a reload can't reopen the same call
-      if (!sockRef.current) return;
-      sockRef.current.emit("call:ready", { to: callerId });
 
       // Tell the user something is happening. Without this the screen just sits there
       // while we wait on the caller, which is indistinguishable from a dead button.
       setReconnecting(true);
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      reconnectTimer.current = setTimeout(() => setReconnecting(false), 20_000);
+
+      /**
+       * Ask repeatedly, not once.
+       *
+       * A single "call:ready" is fragile: our socket may still be connecting as the app
+       * launches, or the CALLER's may be mid-reconnect, and a request sent into either gap
+       * is simply lost — leaving the person staring at "connecting" while the caller's
+       * phone rings on. Re-asking every two seconds costs nothing and closes that window.
+       */
+      let tries = 0;
+      const ask = async () => {
+        tries += 1;
+        try {
+          const token = getAccessToken();
+          if (token) {
+            const s = await getSocket(token);
+            s.emit("call:ready", { to: callerId });
+          }
+        } catch { /* socket not up yet — the next tick tries again */ }
+        if (tries >= 7) { // ~14s, then give up and let them out
+          setReconnecting(false);
+          return;
+        }
+        reconnectTimer.current = setTimeout(ask, 2000);
+      };
+      ask();
     } catch { /* not the native shell, or the bridge isn't registered yet */ }
   }, []);
 
@@ -138,7 +161,10 @@ export default function CallHost() {
         if (p.type === "offer") {
           // already busy? politely refuse
           if (ringRef.current || acceptedRef.current) { s.emit("call:signal", { to: p.from, type: "end" }); return; }
-          setReconnecting(false); // the re-offer we asked for has arrived
+          // The re-offer we asked for has arrived — stop asking, and stop the timer too or
+          // it keeps pinging the caller through the call we just connected.
+          setReconnecting(false);
+          if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
           iceBufRef.current = [];
           // Show the ringing screen immediately so ICE buffering can start; the name is
           // filled in a moment later once the profile lookup returns.
@@ -243,6 +269,18 @@ export default function CallHost() {
           <Phone className="h-8 w-8" />
         </span>
         <p className="animate-pulse text-[15px] font-extrabold">{t("call.connecting")}</p>
+        {/* An escape hatch. The caller may already have hung up, in which case no offer is
+            ever coming — without this the screen just sat there and trapped the person. */}
+        <button
+          onClick={() => {
+            if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+            setReconnecting(false);
+          }}
+          className="mt-6 flex flex-col items-center gap-2 active:scale-95"
+        >
+          <span className="grid h-14 w-14 place-items-center rounded-full bg-red-500"><PhoneOff className="h-6 w-6" /></span>
+          <span className="text-[12px] font-bold">{t("call.end")}</span>
+        </button>
       </div>
     );
   }
