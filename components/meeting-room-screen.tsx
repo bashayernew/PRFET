@@ -203,7 +203,17 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   // connects BEFORE the auto-join creates the participant row, so that first meeting:join was
   // rejected and live comments only started after a reload. This re-fires it at the right time.
   useEffect(() => {
-    if (access === "member" || access === "host") sockRef.current?.emit("meeting:join", { meetingId: id });
+    if (access !== "member" && access !== "host") return;
+    // Same reason as sendChat: sockRef can be null at this moment (the socket effect may not
+    // have finished its async setup yet), and `?.emit` would silently skip the join — which
+    // is exactly how people ended up in a room receiving nothing.
+    const token = getAccessToken();
+    if (!token) return;
+    let alive = true;
+    getSocket(token)
+      .then((s) => { if (alive) s.emit("meeting:join", { meetingId: id }); })
+      .catch(() => { /* socket unavailable — the effect below retries on connect */ });
+    return () => { alive = false; };
   }, [access, id]);
 
   useEffect(() => {
@@ -367,15 +377,37 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [chat]);
 
-  function sendChat() {
+  /**
+   * Send a comment.
+   *
+   * Deliberately NOT `sockRef.current?.emit(...)`. That ref is nulled by the socket effect's
+   * cleanup, and with optional chaining an emit against null is a silent no-op — the comment
+   * vanished with nothing on screen, nothing in the console, and nothing in the server log.
+   * `getSocket()` is a module-level singleton, so asking for it directly always yields the
+   * live connection regardless of what this component's refs happen to hold.
+   */
+  async function sendChat() {
     const body = chatText.trim();
     if (!body) return;
     roomRef.current?.startAudio(); // this tap doubles as the iOS "enable sound" unlock
-    sockRef.current?.emit("meeting:chat", { meetingId: id, body });
+
     // Show my own comment instantly — the server echo is ignored (see the chat handler).
     const mine = people.find((p) => p.id === myId);
     setChat((c) => [...c, { userId: myId, name: mine?.name || t("meet.you"), avatarUrl: mine?.avatarUrl ?? null, body, at: Date.now() }]);
     setChatText("");
+
+    try {
+      const token = getAccessToken();
+      if (!token) return;
+      const sock = await getSocket(token);
+      // Re-announce first: if this socket reconnected since we joined, the server dropped us
+      // from the room and the message would go nowhere. Joining is idempotent.
+      sock.emit("meeting:join", { meetingId: id });
+      sock.emit("meeting:chat", { meetingId: id, body });
+    } catch (e) {
+      console.error("[meet] could not send comment:", e);
+      toast(t("common.error"));
+    }
   }
   function toggleVideo() {
     if (!amAdmin && !myCan.video) { request("video"); return; }
