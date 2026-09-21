@@ -26,6 +26,7 @@ function linkFor(kind: string, targetId?: string | null, actorId?: string | null
   if (kind === "meeting_invite" || kind === "went_live") return targetId ? `/meetings/${targetId}` : "/meetings";
   if (kind === "job_application") return targetId ? `/job/${targetId}` : "/jobs";
   if (kind === "new_follower") return actorId ? `/business/${actorId}` : "/notifications";
+  if (kind === "credits_received") return "/wallet";
   if (kind === "ad_review") return "/ads";
   return "/notifications";
 }
@@ -47,6 +48,8 @@ function phrase(kind: string, locale: string, actor: string, text?: string | nul
       return { title: ar ? "إعادة نشر" : "Repost", body: ar ? `${actor} أعاد نشر منشورك` : `${actor} reposted your post` };
     case "meeting_invite":
       return { title: ar ? "دعوة لغرفة" : "Room invite", body: ar ? `${actor} دعاك إلى «${cut(text)}»` : `${actor} invited you to “${cut(text)}”` };
+    case "credits_received":
+      return { title: ar ? "وصلك دعم 💜" : "You received support 💜", body: ar ? `${actor} أرسل لك $${cut(text)} إلى محفظتك` : `${actor} sent you $${cut(text)} to your wallet` };
     case "went_live":
       return { title: ar ? "بث مباشر الآن 🔴" : "Live now 🔴", body: ar ? `${actor} بدأ بثاً مباشراً: «${cut(text)}»` : `${actor} started a live: “${cut(text)}”` };
     case "missed_call":

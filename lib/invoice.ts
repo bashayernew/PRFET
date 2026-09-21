@@ -4,7 +4,8 @@ import { notify } from "@/lib/notify";
 /** Record a paid transaction as an invoice. Skips $0 (gifts/free posters). */
 export async function createInvoice(opts: {
   userId: string;
-  kind: "subscription" | "ad" | "job" | "seeker";
+  // "support" = credits sent to another member's wallet (see /api/credits/send).
+  kind: "subscription" | "ad" | "job" | "seeker" | "support";
   description: string;
   amount: number;
 }): Promise<void> {

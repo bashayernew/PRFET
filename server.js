@@ -135,16 +135,45 @@ app.prepare().then(() => {
     });
 
     // Text chat inside a room — only for people the host allowed to write.
+    /**
+     * Send a message into a room.
+     *
+     * This used to require an existing MeetingParticipant row and returned silently when
+     * there wasn't one — so anyone watching a live without having gone through the HTTP
+     * join had every message discarded here, with nothing on screen or in the logs to say
+     * why. Opening the join gate alone didn't help: people could receive but not send.
+     *
+     * The host's controls are still honoured. Someone WITH a row must have `canText` (or be
+     * the host); someone without one is an ordinary viewer, allowed only while the room
+     * itself permits text (`allowText`). Kicked people stay out either way.
+     */
     socket.on("meeting:chat", async (p) => {
       const mid = p && p.meetingId;
       const body = ((p && p.body) || "").toString().trim().slice(0, 500);
       if (!mid || !body) return;
-      const part = await prisma.meetingParticipant
-        .findUnique({ where: { meetingId_userId: { meetingId: mid, userId: uid } } })
-        .catch(() => null);
-      if (!part || part.kicked) return;
-      if (!part.canText && part.role !== "host") return;
+
+      const [part, meeting] = await Promise.all([
+        prisma.meetingParticipant
+          .findUnique({ where: { meetingId_userId: { meetingId: mid, userId: uid } } })
+          .catch(() => null),
+        prisma.meeting
+          .findUnique({ where: { id: mid }, select: { allowText: true, status: true } })
+          .catch(() => null),
+      ]);
+
+      if (!meeting || meeting.status !== "live") return;
+      if (part && part.kicked) return;
+      const allowed = part ? (part.canText || part.role === "host") : meeting.allowText;
+      if (!allowed) {
+        console.log(`[meet] chat refused ${uid} in ${mid} (participant: ${!!part}, allowText: ${meeting.allowText})`);
+        return;
+      }
       const u = await prisma.user.findUnique({ where: { id: uid }, select: { displayName: true, avatarUrl: true } }).catch(() => null);
+      // Diagnostic: how many sockets are actually in this room. "listeners: 1" means only
+      // the sender is joined — everyone else is receiving nothing, which looks identical to
+      // the message never being sent.
+      const room = io.sockets.adapter.rooms.get(`meet:${mid}`);
+      console.log(`[meet] chat ${uid} -> ${mid} | listeners: ${room ? room.size : 0}`);
       io.to(`meet:${mid}`).emit("meeting:chat", {
         meetingId: mid,
         userId: uid,
