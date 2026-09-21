@@ -96,6 +96,28 @@ app.prepare().then(() => {
   const meetChat = new Map(); // meetingId -> [{ userId, name, avatarUrl, body, at }]
   const MEET_CHAT_KEEP = 50;
 
+  /**
+   * The most recent call offer aimed at each user, held briefly.
+   *
+   * Signalling is relayed, not stored, so an offer sent to someone whose app was closed hit
+   * zero sockets and was gone. Answering the native ringer then opened an app with nothing
+   * to answer, and the only recovery was asking the CALLER to send another one — which
+   * depends on their app still being open, still holding the call, and their socket being
+   * connected at that exact moment. Too many ways to fail.
+   *
+   * Holding the offer here means the callee can be handed it the instant they appear,
+   * whatever the caller is doing. The SDP stays valid while the caller's connection is
+   * alive; OFFER_TTL is short so a long-dead call is never resurrected.
+   */
+  const pendingOffer = new Map(); // calleeId -> { from, sdp, at }
+  const OFFER_TTL_MS = 90_000;
+
+  // Drop offers nobody claimed, so a missed call can't be answered ten minutes later.
+  setInterval(() => {
+    const now = Date.now();
+    for (const [to, o] of pendingOffer) if (now - o.at > OFFER_TTL_MS) pendingOffer.delete(to);
+  }, 60_000).unref?.();
+
   function rememberChat(mid, msg) {
     const list = meetChat.get(mid) || [];
     list.push(msg);
@@ -221,6 +243,17 @@ app.prepare().then(() => {
         if (p.type === "offer") {
           const room = io.sockets.adapter.rooms.get(p.to);
           console.log(`[call] offer ${uid} -> ${p.to} | callee sockets: ${room ? room.size : 0}`);
+          // Keep it, so answering from the notification doesn't depend on the caller still
+          // being around to send another one.
+          pendingOffer.set(p.to, { from: uid, sdp: p.sdp, at: Date.now() });
+        }
+        // Hanging up invalidates the stored offer in both directions — nobody should be able
+        // to answer into a call that has already ended.
+        if (p.type === "end") {
+          const held = pendingOffer.get(p.to);
+          if (held && held.from === uid) pendingOffer.delete(p.to);
+          const mine = pendingOffer.get(uid);
+          if (mine && mine.from === p.to) pendingOffer.delete(uid);
         }
         io.to(p.to).emit("call:signal", { from: uid, ...p });
       }
@@ -235,10 +268,25 @@ app.prepare().then(() => {
      * re-sends. Without this the ringer opens an app that sits there doing nothing.
      */
     socket.on("call:ready", (p) => {
-      if (p && p.to) {
-        console.log(`[call] ready ${uid} -> ${p.to} (asking for a fresh offer)`);
-        io.to(p.to).emit("call:ready", { from: uid });
+      if (!p || !p.to) return;
+
+      /**
+       * Serve the stored offer immediately when we have one.
+       *
+       * This is the path that actually works. Asking the caller to re-send (below) needs
+       * their app open, holding the call, with a connected socket — and if any of that is
+       * untrue the person who answered just watches "connecting" forever. Replaying the
+       * offer we already hold needs none of it.
+       */
+      const held = pendingOffer.get(uid);
+      if (held && held.from === p.to && Date.now() - held.at < OFFER_TTL_MS) {
+        console.log(`[call] ready ${uid} -> ${p.to} (replaying stored offer)`);
+        socket.emit("call:signal", { from: held.from, type: "offer", sdp: held.sdp });
+        return;
       }
+
+      console.log(`[call] ready ${uid} -> ${p.to} (no stored offer — asking for a fresh one)`);
+      io.to(p.to).emit("call:ready", { from: uid });
     });
 
     socket.on("disconnect", () => {
