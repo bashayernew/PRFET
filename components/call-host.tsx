@@ -6,6 +6,7 @@ import { useI18n } from "@/lib/i18n";
 import { apiGet, apiPost, getAccessToken } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
 import { startIncomingRing, wireAudioUnlock } from "@/lib/ringtone";
+import { registerNativePush } from "@/lib/native-push";
 import CallOverlay from "@/components/call-overlay";
 
 type Incoming = { from: string; sdp: unknown; name: string; avatarUrl: string | null };
@@ -149,6 +150,23 @@ export default function CallHost() {
    * refresh doesn't tear the listener down mid-ring.
    */
   const [authed, setAuthed] = useState(false);
+
+  /**
+   * Claim this phone's push token for whoever is signed in NOW.
+   *
+   * This used to run only on the home screen. Log in and land anywhere else — a chat, a
+   * restored screen — and the device token stayed registered to the PREVIOUS account on
+   * that phone. Incoming-call pushes for that old account then rang on this device, so a
+   * caller's own phone would ring for its own outgoing call while the real recipient got
+   * nothing. Registering is an idempotent upsert keyed on the token, so doing it here (root
+   * layout, every app open, whatever screen) simply keeps the mapping honest.
+   */
+  useEffect(() => {
+    if (!authed) return;
+    const token = getAccessToken();
+    if (token) registerNativePush(token).catch(() => {});
+  }, [authed]);
+
   useEffect(() => {
     const read = () => setAuthed(!!getAccessToken());
     read();
