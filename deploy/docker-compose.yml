@@ -1,9 +1,25 @@
 # Herot — single-VPS stack: app + Postgres + Caddy(TLS) + coturn(calls) + LiveKit(meetings).
 # Put this file + Caddyfile + livekit.yaml + .env on the server, then: docker compose up -d --build
+
+# Cap the container logs.
+#
+# Docker's default json-file driver grows WITHOUT LIMIT. On 2026-09-22 that filled the 38 GB
+# disk to 100%, which stopped Postgres being able to write, which made the app unreachable
+# for the whole day — logs and build cache between them had eaten everything.
+#
+# 10 MB x 3 files per container is roughly 150 MB worst case across the stack, and still
+# leaves plenty of history for `docker compose logs`.
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build: ..
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env
     depends_on: [db]
     volumes:
@@ -13,6 +29,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: herot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -23,6 +40,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DOMAIN: ${DOMAIN}
     extra_hosts:
@@ -38,6 +56,7 @@ services:
   coturn:
     image: coturn/coturn:latest
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     command: >
       -n --realm=${DOMAIN} --server-name=${DOMAIN}
@@ -50,6 +69,7 @@ services:
   livekit:
     image: livekit/livekit-server:latest
     restart: unless-stopped
+    logging: *default-logging
     network_mode: host
     command: --config /etc/livekit.yaml
     volumes:
