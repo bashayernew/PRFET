@@ -22,7 +22,11 @@ export type NotifyOpts = {
 /** Where tapping this notification should take you. */
 function linkFor(kind: string, targetId?: string | null, actorId?: string | null) {
   if (kind === "new_message" || kind === "missed_call" || kind === "incoming_call" || kind === "gift_premium") return actorId ? `/messages/${actorId}` : "/messages";
-  if (kind.startsWith("post_")) return targetId ? `/post/${targetId}` : "/home";
+  // comment_reply / comment_like carry the POST id, so they open the post and its comments.
+  if (kind.startsWith("post_") || kind.startsWith("comment_")) return targetId ? `/post/${targetId}` : "/home";
+  // A story reply is a DM — send them to the conversation, not to the story.
+  if (kind === "story_reply") return actorId ? `/messages/${actorId}` : "/messages";
+  if (kind === "story_like") return "/notifications";
   if (kind === "meeting_invite" || kind === "went_live") return targetId ? `/meetings/${targetId}` : "/meetings";
   if (kind === "job_application") return targetId ? `/job/${targetId}` : "/jobs";
   if (kind === "new_follower") return actorId ? `/business/${actorId}` : "/notifications";
@@ -48,6 +52,14 @@ function phrase(kind: string, locale: string, actor: string, text?: string | nul
       return { title: ar ? "إعادة نشر" : "Repost", body: ar ? `${actor} أعاد نشر منشورك` : `${actor} reposted your post` };
     case "meeting_invite":
       return { title: ar ? "دعوة لغرفة" : "Room invite", body: ar ? `${actor} دعاك إلى «${cut(text)}»` : `${actor} invited you to “${cut(text)}”` };
+    case "comment_reply":
+      return { title: ar ? "رد على تعليقك" : "Reply to your comment", body: ar ? `${actor}: ${cut(text)}` : `${actor}: ${cut(text)}` };
+    case "comment_like":
+      return { title: ar ? "إعجاب بتعليقك ❤️" : "Your comment was liked ❤️", body: ar ? `${actor} أعجب بتعليقك` : `${actor} liked your comment` };
+    case "story_like":
+      return { title: ar ? "إعجاب بقصتك ❤️" : "Your story was liked ❤️", body: ar ? `${actor} أعجب بقصتك` : `${actor} liked your story` };
+    case "story_reply":
+      return { title: ar ? "رد على قصتك" : "Reply to your story", body: ar ? `${actor}: ${cut(text)}` : `${actor}: ${cut(text)}` };
     case "credits_received":
       return { title: ar ? "وصلك دعم 💜" : "You received support 💜", body: ar ? `${actor} أرسل لك $${cut(text)} إلى محفظتك` : `${actor} sent you $${cut(text)} to your wallet` };
     case "went_live":

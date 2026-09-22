@@ -29,7 +29,16 @@ export type PostComment = {
   createdAt: string;
   user: { id: string; displayName: string; avatarUrl: string | null; isPremium?: boolean; textColor?: string | null };
   mine: boolean;
+  /** The comment this one answers, or null for a top-level comment. Nesting is unlimited. */
+  parentId?: string | null;
+  likes?: number;
+  liked?: boolean;
 };
+
+/** Like / unlike a comment. One toggle endpoint, so the button can't get out of step. */
+export async function toggleCommentLike(commentId: string, token?: string) {
+  return apiPost<{ liked: boolean; likes: number }>(`/api/comments/${commentId}/like`, {}, token);
+}
 
 export async function toggleLike(id: string, token?: string) {
   return apiPost<{ liked: boolean; likes: number }>(`/api/posts/${id}/like`, {}, token);

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { X } from "lucide-react";
+import { X, Heart, Send } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { getBusiness } from "@/lib/data";
 import { catIcon } from "@/lib/cat-icons";
@@ -22,10 +22,19 @@ export default function StoryScreen({ id }: { id: string }) {
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const viewedRef = useRef<Set<string>>(new Set());
+  const [myId, setMyId] = useState("");
+  /** Like state per story id, so moving between stories keeps each one's heart correct. */
+  const [liked, setLiked] = useState<Record<string, boolean>>({});
+  const [replyText, setReplyText] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet<{ user: { displayName: string; category: string | null; avatarUrl: string | null } }>(`/api/users/${id}`, getAccessToken() || undefined).then((res) => {
       if (res.ok && res.data?.user) setPeer(res.data.user);
+    });
+    apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
+      if (r.ok && r.data?.user?.id) setMyId(r.data.user.id);
     });
     apiGet<{ stories: Story[] }>(`/api/stories?userId=${id}`).then((res) => {
       if (res.ok && res.data?.stories) setStories(res.data.stories);
@@ -34,6 +43,41 @@ export default function StoryScreen({ id }: { id: string }) {
   }, [id]);
 
   const close = () => router.push("/home");
+
+  /** Optimistic heart; the server's answer wins if they disagree. */
+  async function likeStory(storyId: string) {
+    const was = !!liked[storyId];
+    setLiked((m) => ({ ...m, [storyId]: !was }));
+    const res = await apiPost<{ liked: boolean }>(`/api/stories/${storyId}/like`, {}, getAccessToken() || undefined);
+    if (res.ok && res.data) setLiked((m) => ({ ...m, [storyId]: res.data!.liked }));
+    else setLiked((m) => ({ ...m, [storyId]: was }));
+  }
+
+  /**
+   * Replying to a story sends a PRIVATE message to its owner, the way Instagram and
+   * WhatsApp do — a story lasts a day, and a public thread under something about to vanish
+   * helps nobody. It reuses the existing DM system, so the owner can just reply in chat.
+   *
+   * The story's caption rides along as context; without it the owner receives a bare
+   * sentence with no idea which story prompted it.
+   */
+  async function sendStoryReply() {
+    const body = replyText.trim();
+    if (!body || replySending) return;
+    setReplySending(true);
+    const ctx = cur?.caption?.trim();
+    const full = ctx ? `↩︎ "${ctx.slice(0, 80)}"\n${body}` : body;
+    const res = await apiPost(`/api/conversations/${id}`, { body: full, kind: "text" }, getAccessToken() || undefined);
+    setReplySending(false);
+    if (res.ok) {
+      setReplyText("");
+      setToast(t("story.replySent"));
+      setTimeout(() => setToast(null), 2000);
+    } else {
+      setToast(t("common.error"));
+      setTimeout(() => setToast(null), 2200);
+    }
+  }
 
   // mark current story viewed
   useEffect(() => {
@@ -55,6 +99,8 @@ export default function StoryScreen({ id }: { id: string }) {
   const avatarUrl = peer?.avatarUrl ?? b?.avatarUrl ?? null;
   const hasMedia = stories.length > 0;
   const cur = stories[idx];
+  /** Your own story: no reply bar, since there's nobody to message. */
+  const isMine = myId === id;
 
   // Jump to the next / previous person with an active story (order saved by the home screen).
   const jumpUser = (step: 1 | -1) => {
@@ -155,11 +201,37 @@ export default function StoryScreen({ id }: { id: string }) {
 
       {/* body */}
       {hasMedia ? (
-        cur?.caption ? (
-          <div className="relative z-10 mt-auto bg-gradient-to-t from-black/60 to-transparent px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-16">
-            <p className="text-[15px] font-medium text-white">{cur.caption}</p>
-          </div>
-        ) : null
+        <div className="relative z-10 mt-auto bg-gradient-to-t from-black/70 to-transparent px-5 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-16">
+          {cur?.caption && <p className="mb-3 text-[15px] font-medium text-white">{cur.caption}</p>}
+          {/* stopPropagation throughout: the screen itself advances the story on tap, so
+              without it typing a reply would skip to the next one. */}
+          {cur && !isMine && (
+            <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <input
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") sendStoryReply(); }}
+                placeholder={t("story.reply")}
+                className="h-11 flex-1 rounded-full border border-white/30 bg-white/10 px-4 text-[14px] font-medium text-white outline-none placeholder:text-white/60"
+              />
+              <button
+                onClick={() => likeStory(cur.id)}
+                aria-label={t("story.like")}
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/15 active:scale-90"
+              >
+                <Heart className={`h-5 w-5 ${liked[cur.id] ? "fill-red-500 text-red-500" : "text-white"}`} />
+              </button>
+              <button
+                onClick={sendStoryReply}
+                disabled={!replyText.trim() || replySending}
+                aria-label={t("chat.send")}
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand-600 text-white disabled:opacity-40 active:scale-90"
+              >
+                <Send className={`h-5 w-5 ${dir === "rtl" ? "-scale-x-100" : ""}`} />
+              </button>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
           <span className="grid h-28 w-28 place-items-center rounded-[40px] bg-white/10 ring-1 ring-white/20">
@@ -167,6 +239,11 @@ export default function StoryScreen({ id }: { id: string }) {
           </span>
           <p className="text-[22px] font-extrabold text-white">{name}</p>
           <p className="text-[13px] font-medium text-brand-100">{loaded ? t("story.none") : ""}</p>
+        </div>
+      )}
+      {toast && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-28 z-20 flex justify-center px-6">
+          <div className="rounded-full bg-black/80 px-4 py-2.5 text-[12.5px] font-bold text-white">{toast}</div>
         </div>
       )}
     </div>

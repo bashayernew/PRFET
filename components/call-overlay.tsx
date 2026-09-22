@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { PhoneOff, Mic, MicOff, Volume2, Volume1 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { PhoneOff, Mic, MicOff, Volume2, Volume1, MessageSquare, Phone, ChevronDown } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { apiGet, apiPost, getAccessToken } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
@@ -20,11 +21,22 @@ const nativeAudio = (): NativeAudio | null =>
 export default function CallOverlay({
   peerId, peerName, incomingOffer, initialIce, onEnd,
 }: { peerId: string; peerName: string; incomingOffer: unknown | null; initialIce?: unknown[]; onEnd: () => void }) {
+  const router = useRouter();
   const { t } = useI18n();
-  const [status, setStatus] = useState<"connecting" | "ringing" | "in-call" | "failed">(incomingOffer ? "connecting" : "ringing");
+  /**
+   * ringing    — dialling; the caller hears a ringback
+   * connecting — they PICKED UP; ringback must stop even before audio flows
+   * in-call    — media is flowing
+   * no-answer  — nobody picked up in time
+   */
+  const [status, setStatus] = useState<"connecting" | "ringing" | "in-call" | "failed" | "no-answer">(incomingOffer ? "connecting" : "ringing");
   /** The DOMException name when a call can't start — shown under the error so a tester can report it. */
   const [failReason, setFailReason] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  /** Collapsed to a bar so the rest of the app is usable while talking. */
+  const [minimized, setMinimized] = useState(false);
+  /** Seconds elapsed once connected — shown on the bar so a minimised call isn't invisible. */
+  const [elapsed, setElapsed] = useState(0);
   const [speaker, setSpeaker] = useState(true);
   // Whether this device has more than one audio output (i.e. a phone earpiece + speaker).
   const [canSwitchOutput, setCanSwitchOutput] = useState(false);
@@ -36,6 +48,11 @@ export default function CallOverlay({
   const handlerRef = useRef<((p: Signal) => void) | null>(null);
   /** Re-sends the offer when a callee who answered from a notification comes online. */
   const readyRef = useRef<((p: { from: string }) => void) | null>(null);
+  /** Have we already told the other phone this call is over? Guards against doing it twice. */
+  const endSentRef = useRef(false);
+  /** So the effect's cleanup can end the call without listing endCall as a dependency
+   *  (which would tear the whole call down on every parent re-render). */
+  const endCallRef = useRef<(() => void) | null>(null);
 
   // Parents pass `onEnd` as an inline arrow, so its identity changes on EVERY parent
   // re-render. Keeping it in a ref (instead of the dependency array) stops the whole
@@ -111,11 +128,23 @@ export default function CallOverlay({
           if (st === "connected" || st === "failed" || st === "disconnected") {
             apiPost("/api/call/diag", { stage: "connect", detail: st, peerId }, getAccessToken() || undefined).catch(() => {});
           }
+          // A second route to "in-call": ontrack is the usual one, but a connection can come
+          // up without a track event firing, and then the UI would sit on "connecting".
+          if (st === "connected") {
+            setStatus("in-call");
+            if (!startedAtRef.current) startedAtRef.current = Date.now();
+          }
         };
 
         const onSignal = async (p: Signal) => {
           if (p.from !== peerId) return;
-          if (p.type === "answer" && p.sdp) { await pc.setRemoteDescription(p.sdp as RTCSessionDescriptionInit); }
+          if (p.type === "answer" && p.sdp) {
+            // They picked up. Move off "ringing" NOW rather than waiting for media — the
+            // ringback is tied to that status, and tying it to the first audio packet meant
+            // the caller kept hearing a ring tone after the other person had answered.
+            setStatus((cur) => (cur === "ringing" ? "connecting" : cur));
+            await pc.setRemoteDescription(p.sdp as RTCSessionDescriptionInit);
+          }
           else if (p.type === "ice" && p.candidate) { try { await pc.addIceCandidate(p.candidate as RTCIceCandidateInit); } catch {} }
           else if (p.type === "end") { logCall(!incomingOffer); cleanup(); onEndRef.current(); }
         };
@@ -186,6 +215,9 @@ export default function CallOverlay({
 
     function cleanup() {
       ended = true;
+      // Leaving the screen ends the call for BOTH sides. Without this, navigating away or
+      // closing the call left the other phone ringing at something that no longer exists.
+      endCallRef.current?.();
       try { pcRef.current?.close(); } catch {}
       localRef.current?.getTracks().forEach((t) => t.stop());
       if (handlerRef.current) sockRef.current?.off("call:signal", handlerRef.current);
@@ -241,6 +273,14 @@ export default function CallOverlay({
     return () => { alive = false; };
   }, [status]);
 
+  useEffect(() => {
+    if (status !== "in-call") return;
+    const iv = setInterval(() => {
+      setElapsed(startedAtRef.current ? Math.round((Date.now() - startedAtRef.current) / 1000) : 0);
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [status]);
+
   // Ringback for the caller: the person dialling used to get total silence while the
   // other phone was ringing, with no way to tell the call was actually going through.
   useEffect(() => {
@@ -249,7 +289,40 @@ export default function CallOverlay({
     return () => tone.stop();
   }, [status]);
 
-  function hangUp() {
+  /**
+   * Give up after a while.
+   *
+   * Ringing forever is worse than a clear "they didn't pick up": the caller can't tell
+   * whether the other phone is ringing, switched off, or whether the app is simply broken —
+   * and they burn battery holding a dead call open. Telling them plainly, with something to
+   * do next, is what every phone app does.
+   *
+   * The call is recorded as missed for BOTH sides, so it appears in the conversation and in
+   * the other person's notifications rather than vanishing.
+   */
+  const NO_ANSWER_SECONDS = 40;
+  useEffect(() => {
+    if (status !== "ringing") return;
+    const to = setTimeout(() => {
+      setStatus("no-answer");
+      endCallRef.current?.();                    // stop their phone ringing too
+      logCall(!incomingOffer);                   // 0 seconds = never connected
+      apiPost("/api/call/missed", { peerId }, getAccessToken() || undefined).catch(() => {});
+    }, NO_ANSWER_SECONDS * 1000);
+    return () => clearTimeout(to);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  /**
+   * Tell the other phone the call is over.
+   *
+   * Shared by the hang-up button and by unmount, because leaving the screen has to stop
+   * their phone ringing just as surely as tapping the red button does. `endSentRef` makes
+   * it safe to call twice — the button runs it, then unmount runs it again a moment later.
+   */
+  function endCall() {
+    if (endSentRef.current) return;
+    endSentRef.current = true;
     sockRef.current?.emit("call:signal", { to: peerId, type: "end" });
     // The socket "end" above only reaches a phone that HAS a socket. If their app is closed
     // it never arrives and their notification keeps ringing at a call that no longer exists
@@ -258,6 +331,12 @@ export default function CallOverlay({
     if (status !== "in-call") {
       apiPost("/api/call/cancel", { peerId }, getAccessToken() || undefined).catch(() => {});
     }
+  }
+
+  endCallRef.current = endCall;
+
+  function hangUp() {
+    endCall();
     logCall(!incomingOffer);
     onEnd();
   }
@@ -320,15 +399,94 @@ export default function CallOverlay({
     setSpeaker(next);
   }
 
+  const mmss = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`;
+
+  /**
+   * Nobody picked up.
+   *
+   * Shown instead of ringing forever, with the two things people actually want next:
+   * message them, or try again. The audio element stays mounted so unmount cleanup is
+   * identical on every path.
+   */
+  if (status === "no-answer") {
+    return (
+      <div className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 px-8 text-white">
+        <audio ref={audioRef} autoPlay />
+        <div className="grid h-24 w-24 place-items-center rounded-full bg-white/15 text-3xl font-extrabold">{peerName.charAt(0)}</div>
+        <div className="text-center">
+          <p className="text-[19px] font-extrabold">{peerName}</p>
+          <p className="mt-1.5 text-[13.5px] text-brand-100">{t("call.notAvailable")}</p>
+        </div>
+        <div className="mt-2 flex w-full flex-col gap-2.5">
+          <button
+            onClick={() => { onEnd(); router.push(`/messages/${peerId}`); }}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white py-3.5 text-[14px] font-extrabold text-brand-700 active:scale-95"
+          >
+            <MessageSquare className="h-4 w-4" /> {t("call.messageInstead")}
+          </button>
+          <button
+            onClick={() => { endSentRef.current = false; loggedRef.current = false; setStatus("ringing"); }}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-white/15 py-3.5 text-[14px] font-extrabold text-white active:scale-95"
+          >
+            <Phone className="h-4 w-4" /> {t("call.callAgain")}
+          </button>
+          <button onClick={onEnd} className="w-full py-2 text-[13px] font-bold text-brand-100/80">
+            {t("close")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /**
+   * Minimised: a slim bar instead of a full-screen takeover.
+   *
+   * The call lives in the root layout, so collapsing it leaves the audio untouched while the
+   * whole app stays usable — read a message, check a profile, look something up mid-call.
+   * A full-screen overlay made the app unusable for the duration.
+   */
+  if (minimized) {
+    return (
+      <div className="fixed inset-x-0 top-0 z-[60] mx-auto max-w-[480px] px-2 pt-[calc(env(safe-area-inset-top)+6px)]">
+        <audio ref={audioRef} autoPlay />
+        <div className="flex items-center gap-3 rounded-2xl bg-brand-700/95 px-3 py-2 shadow-lg backdrop-blur">
+          <button onClick={() => setMinimized(false)} className="flex min-w-0 flex-1 items-center gap-2.5 text-start">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/15 text-[13px] font-extrabold text-white">{peerName.charAt(0)}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-extrabold text-white">{peerName}</span>
+              <span className="block text-[11px] font-bold text-brand-100" dir="ltr">
+                {status === "in-call" ? mmss : status === "ringing" ? t("call.ringing") : t("call.connecting")}
+              </span>
+            </span>
+          </button>
+          <button onClick={toggleMute} aria-label={t("call.mute")} className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${muted ? "bg-white text-brand-700" : "bg-white/15 text-white"}`}>
+            {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+          </button>
+          <button onClick={hangUp} aria-label={t("call.end")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-500 text-white active:scale-95">
+            <PhoneOff className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
       <audio ref={audioRef} autoPlay />
+      {/* Collapse to a bar — the app stays usable while the call continues. */}
+      <button
+        onClick={() => setMinimized(true)}
+        aria-label={t("call.minimize")}
+        className="absolute start-4 top-[calc(env(safe-area-inset-top)+12px)] grid h-10 w-10 place-items-center rounded-full bg-white/15 active:scale-95"
+      >
+        <ChevronDown className="h-5 w-5" />
+      </button>
       <div className="grid h-28 w-28 place-items-center rounded-full bg-white/15 text-4xl font-extrabold">{peerName.charAt(0)}</div>
       <div className="text-center">
         <p className="text-[20px] font-extrabold">{peerName}</p>
         <p className="mt-1 text-[13px] text-brand-100">
           {status === "failed" ? t("call.micBlocked")
-            : status === "in-call" ? t("call.inCall")
+            : status === "in-call" ? mmss
             : status === "ringing" ? t("call.ringing")
             : t("call.connecting")}
         </p>

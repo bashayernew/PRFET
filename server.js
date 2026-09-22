@@ -296,6 +296,21 @@ app.prepare().then(() => {
         prisma.user.update({ where: { id: uid }, data: { online: false } }).catch(() => {});
         io.emit("presence:update", { userId: uid, online: false });
 
+        /**
+         * A caller who vanished mid-ring takes their call with them.
+         *
+         * Hanging up properly sends "end" and a cancel push. Killing the app runs no
+         * JavaScript at all, so neither happens — and the stored offer would sit here
+         * letting someone answer into a call whose other end no longer exists. Dropping it
+         * on disconnect means the worst case is a missed call rather than a dead one.
+         */
+        for (const [calleeId, held] of pendingOffer) {
+          if (held.from !== uid) continue;
+          pendingOffer.delete(calleeId);
+          console.log(`[call] caller ${uid} vanished — dropped the held offer for ${calleeId}`);
+          io.to(calleeId).emit("call:signal", { from: uid, type: "end" });
+        }
+
         // Room cleanup: going fully offline removes the user from any live room (frees the
         // seat, no ghost), and a host going offline ends their live rooms.
         (async () => {

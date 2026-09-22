@@ -129,6 +129,8 @@ model User {
   posts         Post[]
   postLikes     PostLike[]
   postComments  PostComment[]
+  commentLikes  CommentLike[]
+  storyLikes    StoryLike[]
   locationHides LocationHide[] @relation("LocationHides")
   dmAllows      DmAllow[]      @relation("DmAllows")
   joinRequests  MeetingJoinRequest[]
@@ -383,6 +385,7 @@ model Story {
   createdAt DateTime    @default(now())
   expiresAt DateTime // 24h after createdAt
   views     StoryView[]
+  likes     StoryLike[]
 
   @@index([userId])
   @@index([expiresAt])
@@ -538,8 +541,45 @@ model PostComment {
   body      String
   createdAt DateTime @default(now())
 
+  /// Replies nest without limit. Deleting a comment takes its whole subtree with it
+  /// (onDelete: Cascade), so no reply is ever left pointing at a parent that is gone.
+  parentId  String?
+  parent    PostComment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   PostComment[] @relation("CommentReplies")
+
+  likes     CommentLike[]
+
   @@index([postId])
   @@index([createdAt])
+  @@index([parentId])
+}
+
+/// One like per person per comment — the unique constraint makes double-liking impossible
+/// at the database level rather than relying on the client behaving.
+model CommentLike {
+  id        String      @id @default(cuid())
+  commentId String
+  comment   PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([commentId, userId])
+  @@index([commentId])
+}
+
+/// Likes on a story. Cascades with the story, so they disappear when it expires and is
+/// cleaned up — no orphans building up from content that no longer exists.
+model StoryLike {
+  id        String   @id @default(cuid())
+  storyId   String
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([storyId, userId])
+  @@index([storyId])
 }
 
 model LocationHide {
