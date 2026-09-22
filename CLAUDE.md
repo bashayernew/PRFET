@@ -200,3 +200,328 @@ Google/Apple re-review every update. Display name: "PRFET Reviewer".
   hardcoded $30). Sets `premiumTier` on the recipient.
 - Minor leftover: `settings-screen.tsx` still has an unused `tiers` state referencing sub3m/6m/12m,
   but it only renders the monthly price (no bundle UI shown). Cosmetic; not urgent.
+
+## Session 2026-09-16 — client fix list (round 2), all deployed as WEB pushes
+Client sent a 22-item list. Status + what shipped (commits after 2ba529b: search/ads/live/call fixes,
+then `db09946` distance+subs):
+- **Item 10 search dupes/self** (`app/api/users/route.ts`): added `id: { not: me }` to exclude the
+  viewer, and a name+avatar dedup pass so a duplicated official/PRFET account no longer shows 2–3×.
+- **Item 4 live camera flip** (`lib/livekit.ts` `flipCamera` restarts the track with a new
+  `facingMode`; `components/meeting-room-screen.tsx` flip button, shown when camera on; i18n `meet.flip`).
+- **Item 13 call speaker** (`components/call-overlay.tsx`): the toggle was disabled on Android (no
+  earpiece label) so speaker couldn't turn off. Now enabled on any touch device, and it prefers a
+  NATIVE bridge `window.PrfetNative.setSpeakerphone(on)` — added in `BleBridge.java` via AudioManager
+  (`MODE_IN_COMMUNICATION` + `setSpeakerphoneOn`). **Native part needs the next AAB** to take effect;
+  the web button works now. NOTE: `android/` is GITIGNORED, so the Java change lives only in the local
+  tree and rides the next Android Studio build — it is NOT in git.
+- **Items 17/20 ads country targeting** (`app/api/ads/serve/route.ts` exact CSV country match instead
+  of substring; `components/ads-screen.tsx` now passes the viewer country). Ad reaches everyone in the
+  country, no follow needed.
+- **Item 21 ads in home feed** (`components/home-screen.tsx`): country-targeted ads fetched from
+  `/api/ads/serve` and interleaved after every 4 posts as `FeedAdCard` with a "contact advertiser"
+  button → `/messages/<advertiserUserId>`. i18n `home.sponsored`, `ads.contact`.
+- **Item 16 admin got everyone's notifications:** NOT a code bug (`lib/notify.ts` only targets the one
+  user; `lib/fcm.ts` already prunes dead tokens). Cause was leftover admin DeviceToken/PushSubscription
+  rows from testing. **Fixed by a one-time DB cleanup** (DELETE from DeviceToken/PushSubscription where
+  userId in admins) — already run on prod (DELETE 1 / DELETE 2).
+- **Item 6 distance search** (`app/api/users/route.ts`): was ordered by rating (not distance) and the
+  slider dropped every unknown-location user below 100km → empty list. Now: keep unknown-location users
+  (list never empties), filter known-distance users by the slider, and **sort nearest-first** when the
+  viewer has an origin. No unit mismatch existed (slider metres → `maxKm = m/1000`). `showDistance`
+  defaults true. Root data issue remains: few users have `locationLat/Lng` (sync is 10-min throttled,
+  permission-gated in `lib/use-location-sync.ts`).
+- **Item 18 subscriptions never ended** (`lib/premium.ts`): `premiumLapsed` required `!autoRenew`, but
+  grants/gifts/admin all leave `autoRenew=true` (default), so premium stayed forever. FIX: lapse when
+  `premiumUntil < now` regardless of autoRenew. Store auto-renew pushes `premiumUntil` forward on each
+  charge so real renewals don't wrongly lapse; gifts (30d) / admin grants / cancelled subs now end on
+  their date. Enforced lazily on login + `/api/auth/me` (`expireIfLapsed`). Tier caps already live from
+  AppSettings per `premiumTier`.
+- **Item 14 post reach:** WORKING AS DESIGNED — home feed is followed-only (`/api/posts?feed=following`
+  = your follows + you); non-followers see posts only on the poster's profile grid. User chose to keep
+  followers-only. To open it up = show posts to everyone/country (declined for now).
+- **Item 9 search page cut off:** client screenshot shows it fits fine after the earlier viewport fix.
+  Resolved.
+- **App icon:** replaced the default Capacitor launcher icon with the PRFET golden monogram across all
+  mipmap densities + adaptive foreground (from `prfet-icon-512.png`), generated into
+  `android/app/src/main/res/mipmap-*`. **Shows only after the next AAB** (android is gitignored → local).
+
+### STILL PENDING
+- **Next AAB build** bundles the native items: app icon, #11 reversed front-camera video (native camera
+  mirror), #5 ringing-when-closed (WhatsApp style), #7/#8 Bluetooth listing (needs 2 phones on new
+  build), and #13 native speaker routing (`setSpeakerphone`). Bump `android/app/build.gradle`
+  versionCode/Name before building.
+- **Item 15 app lag:** general perf on t3.micro; not a discrete fix.
+- **SECURITY:** `ses-smtp-user.*.csv` (SMTP creds) is COMMITTED in the GitHub repo — remove
+  (`git rm --cached`) + add to `.gitignore` + rotate the SES SMTP creds. Also still rotate the exposed
+  Firebase service-account key + old Gmail app password.
+- Deploy flow this session: selective `git add <files>` (NOT `-A` — working tree has unrelated
+  IAP/RevenueCat/credits/`schema.prisma` WIP that must NOT ship) → push from PowerShell → `git pull &&
+  docker compose up -d --build` on the server via EC2 Instance Connect (ISP does DPI on SSH so direct
+  PowerShell ssh to :22/:2222 fails at the banner; browser terminal is the reliable shell).
+
+
+---
+
+# Sessions 2026-09-17 → 09-22 — big one. Read this before touching calls, deploys or the server.
+
+## ⚠️ DEPLOY DISCIPLINE — read first, this cost ~6 hours
+
+**Always deploy with `--force-recreate`:**
+```bash
+cd ~/app && git pull && cd deploy && docker compose up -d --build --force-recreate
+```
+Without it Compose may reuse the running container. On 09-20 the app served **45-hour-old code**
+while fix after fix was tested and reported as "still broken". Several fixes were never running.
+
+**Verify every deploy** (10 seconds, saves hours):
+```bash
+cd ~/app/deploy && docker compose ps      # deploy-app-1 must say "Up less than a minute"
+```
+
+**`NEXT_PUBLIC_*` env vars are compiled into the bundle at BUILD time** — changing one needs a full
+`--build --force-recreate`, not a restart. Server-only vars (`GEMINI_API_KEY`, `POSTMARK_TOKEN`,
+`REVENUECAT_WEBHOOK_AUTH`, `KWTSMS_*`, `TWILIO_*`) are read per request → `up -d --force-recreate app`
+is enough (~15s, no rebuild).
+
+## 🔥 OUTAGE 2026-09-22 — disk full, app down all day
+
+Symptom: "very slow 10am–8pm, sometimes won't open". Looked like peak-traffic load. It wasn't.
+
+`/dev/root` hit **100% (6 MB free of 38 GB)** → Postgres couldn't write → app couldn't reach
+`db:5432` → every request retried → **load average 355**, app container at 196% CPU with 3,735 PIDs.
+CPU steal was 0, so it was never CPU credits or traffic.
+
+Cause: **Docker's json-file log driver is unbounded** (made worse by the `[call]`/`[meet]` diagnostics
+added 09-21) plus **15.5 GB of build cache** from ~20 rebuilds.
+
+Recovery:
+```bash
+sudo sh -c 'truncate -s 0 /var/lib/docker/containers/*/*-json.log'
+docker system prune -af          # NEVER --volumes: that deletes deploy_pgdata + deploy_uploads
+cd ~/app/deploy && docker compose restart
+```
+38 GB → 19 GB used.
+
+**Permanent fix shipped:** `deploy/docker-compose.yml` now has an `x-logging` anchor
+(`max-size: 10m`, `max-file: 3`) applied to all five services. Only takes effect on container
+**recreate**.
+
+**Weekly habit:** `df -h /` — above 80% run `docker system prune -af`.
+**Still unbounded:** `deploy_uploads` (every photo/video/voice note, nothing deletes them). Next thing
+that will fill the disk. Needs a retention policy.
+
+## Server
+- Resized **t3.micro → t3.medium** (09-19). t3.micro had 298 MB available and was swapping constantly
+  (`si` > 0 = actively paging back in). After: 3 GB free, zero swap. ~$0→$34/mo (it was free-tier).
+- App responds in **0.2 ms** locally. Any remaining slowness is the ~4,000 km to Frankfurt
+  (90–130 ms RTT) — the app is a WebView loading prfet.com, so *every tap* pays it.
+- **AWS Middle East regions are gone** — me-south-1 (Bahrain) permanently unrecoverable and
+  me-central-1 (UAE) partially, after Iranian strikes in March 2026. Do not plan a move there.
+  Next-best latency win: **Cloudflare in front** (free; TLS terminates at a Gulf edge PoP, caches
+  static assets). Must set `livekit.prfet.com` to **DNS-only/grey cloud** or live rooms break, and
+  leave all mail records unproxied.
+
+## Email + OTP
+- **Root cause of the Resend suspension:** `resend-otp` and `forgot` had **no rate limiting at all**.
+  Anyone could trigger unlimited mail to any address. A new provider would have suspended us too.
+- **`lib/otp-guard.ts`** (new): per-address 60s cooldown, 5/hour, 15/day; per-IP 15/hour. Applied to
+  register, resend-otp and forgot. Covers phone numbers too (SMS costs money per send).
+- **Postmark** is now the primary sender (`POSTMARK_TOKEN`), falling back to Resend then SMTP.
+  Sends on the `outbound` transactional stream. Domain verified; DKIM + Return-Path green.
+  Root SPF is `-all` Outlook-only — fine because Postmark uses its own Return-Path and DMARC is
+  relaxed, but it means the **SES/SMTP fallback would hard-fail**. Don't rely on it.
+- **Phone signup was completely broken**, not just missing SMS: a code was generated and hashed, and
+  only the email branch ever delivered anything. Nobody registering by phone could ever verify.
+- **`lib/sms.ts`** (new): routes by destination — `+965` → **kwtSMS** (~KWD 0.015/msg, local gateway,
+  guaranteed Kuwait delivery), everything else → **Twilio** ($0.32/msg to Kuwait), each falling back
+  to the other. Kuwaiti operators filter business SMS without a Sender ID registered to a local
+  company, which is why Twilio alone is unreliable there. Plivo **blocks signups from Kuwait**.
+  kwtSMS API access was still pending (their request form posts to a 404 — contact them on WhatsApp
+  +965 9922-0322).
+
+## Calls — the long one
+Chronological, because several "fixes" were chasing symptoms of the previous cause.
+
+1. **`lib/socket.ts` called a non-existent `refreshAccessToken()`** → ReferenceError on any rejected
+   handshake → socket dead for the whole session. Shipped silently because
+   `typescript.ignoreBuildErrors: true`. Fixed to `refreshAccess()`.
+2. **Stale `online` flags.** Only the disconnect handler cleared `online`, so a container restart left
+   everyone marked online forever — callable with no live socket. `server.js` now clears them at boot
+   (`> presence: cleared N stale online flag(s)`).
+3. **Answering from the notification did nothing.** `claimPendingCall` only ran on socket-connect;
+   answering while the app is already foregrounded fires `onNewIntent` but no visibilitychange and no
+   focus event. Now **polled every 1s** plus both events.
+4. **The retry loop killed the call.** Asking the caller repeatedly made them re-send the offer; the
+   second one hit the "already busy" guard which replied `end`. Repeat offers from the *same* peer are
+   now recognised as retries and ignored.
+5. **Server-held offer.** Signalling is relayed, not stored, so an offer to a closed app was lost.
+   `server.js` now holds the last offer per callee for 90s and **replays it** on `call:ready` —
+   removing the dependency on the caller still being alive. Log: `(replaying stored offer)`.
+6. **Device tokens misrouted pushes.** `registerNativePush` ran **only on the home screen**, so logging
+   in and landing elsewhere left the FCM token registered to the PREVIOUS account on that phone —
+   a caller's own phone rang for its own outgoing call. **19 stale rows** were in `DeviceToken`.
+   Now re-registered on every app open from `CallHost` (root layout). One-time cleanup:
+   `DELETE FROM "DeviceToken";` (every device re-registers within seconds).
+7. **Stale notifications.** The CallStyle notification is `setOngoing(true)` + `setAutoCancel(false)`
+   so it can't be swiped mid-ring — which means **unanswered calls leave it in the tray forever**.
+   Tapping an old one resumes a dead call. Server now replies `call:none` when it holds no offer, and
+   the app shows "انتهت المكالمة" for 2s instead of hanging for 15.
+   **REAL FIX STILL TODO: auto-cancel the notification after ~45s in `CallNotification.java` (needs an AAB).**
+8. Hanging up now also fires `/api/call/cancel` → `pushCallCancelled` (dismisses the notification on a
+   closed app); **closing the call screen ends the call for both sides** (`cleanup()` → `endCall()`);
+   and the server drops held offers when a caller's socket disconnects.
+9. Ringback kept playing after the other side answered — `status` only left `"ringing"` on the first
+   media packet. Now switches on the `answer` signal, with `connectionState === "connected"` as a
+   second route to `in-call`.
+10. **No-answer screen** after 40s: "not available" + Send a message / Call again. Logs a missed call
+    both sides.
+11. **Minimise to a bar** — the call collapses to a top bar with a live timer, mute and hang-up, so the
+    app stays usable mid-call. Works because `CallHost` is in the root layout.
+
+## DIAGNOSTICS — how to debug calls and live rooms now
+```bash
+cd ~/app/deploy && docker compose logs -f app | grep -E "\[call\]|\[meet\]"
+```
+| Line | Meaning |
+|---|---|
+| `[call] offer A -> B \| callee sockets: N` | N=0 → callee's app is closed (expected; the push path handles it) |
+| `[call] ready B -> A (replaying stored offer)` | **Healthy** — B answered, got the held offer |
+| `[call] ready ... (no stored offer — likely a stale notification)` | Old notification tapped |
+| `[call] DEVICE <user> \| stage: getUserMedia \| NotAllowedError` | Mic refused — phone settings |
+| `[call] DEVICE <user> \| stage: connect \| connected` | **Media is flowing** |
+| `[call] DEVICE <user> \| stage: connect \| failed` | Phones couldn't find a route → TURN/network |
+| `[call] DEVICE <user> \| stage: answered-notification` | Which phone tapped Answer — must be the CALLEE |
+| `[meet] chat X -> Y \| listeners: N` | N=1 means only the sender is in the room |
+| `[meet] chat refused ...` | Room blocked them |
+
+`POST /api/call/diag` is the device→server reporter. Diagnostics only; stores nothing.
+**If the same user id appears as both `offer` sender and `answered-notification` sender, it's a stale
+notification or a misrouted push — not a signalling bug.** That cost hours twice.
+
+## Live rooms
+- **Comments never arrived:** `meeting:join` required an existing `MeetingParticipant` row, but the
+  socket connects *before* the HTTP join creates it → silently rejected. Now only `kicked` is excluded.
+- **Comments couldn't be sent** for the same reason in `meeting:chat` — fixed by honouring the host's
+  `canText` when a row exists, and the room's `allowText` when it doesn't.
+- **`sendChat` used `sockRef.current?.emit()`** which is a silent no-op when the ref is null (the
+  effect cleanup nulls it). Now gets the socket via `getSocket()` (a module singleton) and re-joins
+  before sending.
+- **Comments went missing on reconnect** — room chat is relayed, never stored. `server.js` now keeps
+  the last 50 per room in memory and replays them via `meeting:chatHistory` on join. Dropped when the
+  room ends.
+- **Room stayed frozen when it ended:** the handler used `alert()`, which blocks the JS thread and in
+  an Android WebView sometimes never renders → `router.push()` never ran. Now a toast.
+  ⚠️ **There are still ~10 `confirm()` calls** (delete message, delete ad, clear AI chat, admin
+  dashboard) with exactly the same risk.
+- **Host approval now opens the thing immediately** — video/screen previously only reacted to being
+  *revoked*, and mic failures were swallowed by `.catch(() => {})`.
+- **"Tap to enable sound"** — mobile blocks audio playback until a real gesture; a listener who never
+  tapped heard silence with no explanation.
+- **Invite sheet** — share now lists people you follow (`POST /api/meetings/[id]/invite`) instead of
+  copying a link that notifies nobody.
+- **went-live and invite notifications now push** — they used `notification.createMany()` which only
+  writes the in-app row. `notify()` is what sends FCM + web push. `went_live` was also missing from
+  `phrase()` and `linkFor()`.
+- Invited users can now SEE the room: the rooms list only revealed followers-only rooms to *followers*.
+  The `meeting_invite` notification row is used as the invite record (no schema change).
+
+## Chat / posts / stories
+- **Comment/share sheets were invisible** on fullscreen media: `z-50` under the viewer's `z-[60]`.
+  Now `z-[70]`.
+- **Clipboard fallback** for Android WebView (`navigator.clipboard` often missing).
+- **View-once media** stayed on screen indefinitely after opening — only expiring on reload. Now a
+  15-second window, then it collapses. NOTE: the **sender's copy is never removed** (by design), and
+  **the file itself is never deleted from disk** — only the URL is withheld.
+- **Camera capture in chat** — attach sheet now has Take photo / Record video (`capture` attribute set
+  per tap and REMOVED for gallery picks, or some Android builds refuse to offer the gallery).
+- **Comment likes + unlimited nested replies** (`CommentLike` model, `PostComment.parentId` self-
+  relation, cascade deletes the subtree). Visual indent caps at 4 levels; data nests freely.
+- **Story likes** (`StoryLike`) and **story replies → private DM** to the owner with the caption as
+  context (reuses the chat system, no new model).
+- **Ad enquiry prefill** — "contact advertiser" opens the chat with the ad already written in the box.
+- **Discover "Enable location"** failed silently in four ways (no API, denied, unavailable, and **no
+  timeout** — Android's `getCurrentPosition` can hang forever). Now a busy state, 10s timeout, and a
+  specific message per failure.
+
+## Payments (RevenueCat / Play Billing)
+- Server-side IAP (webhook, grants, entitlements, credits) was **already shipped** — the old CLAUDE.md
+  note calling it unshipped WIP was wrong.
+- `@revenuecat/purchases-capacitor@9.2.2` installed (v13 needs Capacitor 8; we're on 6). Until this,
+  `lib/iap.ts` returned null and **wallet credit purchases had never worked**.
+- `subscribe-screen.tsx` now uses **Play Billing in the app** and FastSpring only on web — selling
+  digital goods in-app through an external processor is what gets apps pulled. Restore button added.
+- **RevenueCat project "PRFET"** created, Test Store first. Products `prfet_basic_1m` ($5.99) and
+  `prfet_vip_1m` ($10.99) created; entitlements **`basic`** and **`vip`** (lowercase — `tierFromEntitlements`
+  matches those strings literally; "PRFET Pro" would grant nothing). Consumables still to add:
+  `prfet_credits_5/10/20/50`, `prfet_addon_media/storage/voice`.
+- **The app now shows the STORE's price**, not the dashboard's. RevenueCat can never know about
+  dashboard price changes — they're separate systems, and the mismatch is a store policy problem.
+  Dashboard prices now govern **web checkout only**.
+- ⚠️ Google takes 15–30%. Credit packs currently credit the same amount they cost → a loss per sale.
+- ⚠️ `prfet_addon_voice`: voice chat is disabled (`VOICE_CHAT = false`), so don't sell it yet.
+- ⚠️ VIP radar minutes (480) are LOWER than Golden (2000) in the dashboard — looks like a mistake.
+
+## Wallet
+- `transferCredits()` + `POST /api/credits/send` — support another member by sending credits to their
+  wallet. Closed loop: spendable in-app, **never withdrawable**, which keeps it virtual goods rather
+  than a regulated payment service. Atomic, checks the recipient's $500 cap *before* debiting, writes
+  an Invoice receipt for both sides (`kind: "support"`). **UI entry point not built yet.**
+
+## Security
+- `prfet-release.jks` and `ses-smtp-user.*.csv` were committed → `git rm --cached` + `.gitignore`
+  (`*.jks`, `*.keystore`, `ses-smtp-user.*.csv`). **Still need rotating.**
+- Log probes for `.npmrc`, `.git/config`, `application.yml` + `sh: curl not found` = routine internet
+  scanning, not a compromise (verified: no unexpected processes, no outbound connections, and the
+  container has no shell tooling). 52 probes/24h.
+
+## Android / AAB
+Current: **versionCode 8 / 1.0.7**. `android/` is gitignored — every native change lives ONLY on the
+local drive. **Back up `D:\app\android` or it's gone.**
+Native pieces shipped: CallStyle full-screen ringer (`CallNotification.java`, `PrfetMessagingService`
+extends the Capacitor plugin's service and replaces it via `tools:node="remove"`), `pendingCall()` /
+`clearPendingCall()` bridge, `USE_FULL_SCREEN_INTENT`, show-over-lockscreen, `POST_NOTIFICATIONS`.
+`firebase-messaging:23.3.1` had to be added to `android/app/build.gradle` — the plugin declares it with
+`implementation`, so it isn't on the app module's compile classpath.
+Play Console: **Full-screen intent permission declared as a calling app** (required on Android 14+).
+
+### Next AAB should include
+- **Auto-cancel the call notification after ~45s** (the stale-notification root cause).
+- `MainActivity` calls `wv.reload()` unconditionally on startup → **the app loads prfet.com TWICE every
+  launch**. Over a 130 ms link that's seconds of pure waste. Needs care: it exists so the BleBridge
+  JavaScript interface is visible to the page.
+
+## AI (Gemini)
+`GEMINI_API_KEY` regenerated 09-21 → still 402 `RESOURCE_EXHAUSTED`. **The key was never the problem:**
+the project's billing account ("My Billing Account", holding *Default Gemini Project*) was at
+**−$0.82**. A second account "PRFET APP" has $0 and **0 projects**, so funding it does nothing.
+Fix is in Google Cloud Billing, not in code. There's a "Redeem $10 in credits" offer in AI Studio.
+
+## 🛡️ HOW TO STOP ALL THIS HAPPENING AGAIN
+
+**1. Know before your client does.** Everything today was found by a user complaining.
+   - External uptime monitor (UptimeRobot/BetterStack, free) on https://prfet.com, 5-min checks.
+   - CloudWatch alarm on disk > 80%. Today's outage was preventable days earlier.
+   - A `/api/health` endpoint that actually checks the DB (not built yet).
+
+**2. Stop writing silent failures.** Nearly every bug in these sessions was one of:
+```js
+.catch(() => {})          // error vanishes
+sockRef.current?.emit()   // null → silently does nothing
+alert() / confirm()       // blocks the JS thread in a WebView
+```
+   An empty catch is only OK with a comment saying why. Otherwise log it or show it.
+
+**3. `typescript.ignoreBuildErrors: true` means type errors SHIP.** That's how a call to a
+   non-existent function ran in production for weeks. Run `npx tsc --noEmit` locally before pushing.
+   (Note: `prisma generate` must have run, or you get a wall of false errors about missing models.)
+
+**4. Weekly, 30 seconds:**
+```bash
+df -h /                                   # >80% → docker system prune -af (NEVER --volumes)
+cd ~/app/deploy && docker compose ps      # everything Up?
+```
+
+**5. Deploy the same way every time** — `--build --force-recreate`, then verify with `docker compose ps`.
+
+**6. Keep this file current.** It is the only thing that carries context between sessions. A stale
+   CLAUDE.md actively misleads — the "IAP is unshipped WIP" note sent us down the wrong path.
