@@ -39,6 +39,8 @@ export default function CallHost() {
 
   /** Waiting for the caller to re-send their offer after we answered from the ringer. */
   const [reconnecting, setReconnecting] = useState(false);
+  /** Set when the server tells us the call we tried to resume no longer exists. */
+  const [callGone, setCallGone] = useState(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Stop asking the caller for a fresh offer, and clear the waiting screen. */
@@ -134,6 +136,28 @@ export default function CallHost() {
     ringRef.current = null;
   }, []);
 
+  /**
+   * An unanswered incoming call gives up after a while.
+   *
+   * Without this, a ring that nobody accepts or declines — the caller's app died, the phone
+   * was in a pocket — leaves `incomingRef` and the ringtone set FOREVER. Every later offer
+   * from that person then looks like a duplicate and gets swallowed, so the in-app ring
+   * never appears again and calls only ever arrive as notifications. Clearing it turns a
+   * stuck state into an ordinary missed call.
+   */
+  useEffect(() => {
+    if (!incoming) return;
+    const to = setTimeout(() => {
+      stopRing();
+      const from = incomingRef.current?.from;
+      incomingRef.current = null;
+      iceBufRef.current = [];
+      setIncoming(null);
+      if (from) apiPost("/api/call/missed", { peerId: from }, getAccessToken() || undefined).catch(() => {});
+    }, 45_000);
+    return () => clearTimeout(to);
+  }, [incoming, stopRing]);
+
   // Ringtone built in the browser — no audio file to ship. Uses the shared, unlocked
   // AudioContext; the old code created a fresh one per call, which the browser started
   // in a suspended state, so the phone rang silently.
@@ -198,14 +222,28 @@ export default function CallHost() {
 
         if (p.type === "offer") {
           /**
-           * A repeat offer from the person we're ALREADY ringing with or talking to is a
-           * retry, not a second caller — we asked for it ourselves via "call:ready", which
-           * is sent several times because a single request is lost if either socket is
-           * reconnecting. Answering it with "end" would hang up the very call we just
-           * picked up. Ignore it and stop asking.
+           * Already TALKING to this person: a repeat offer is a retry we asked for via
+           * "call:ready" (sent several times, because one request is lost if either socket
+           * is reconnecting). Answering it with "end" would hang up the call we just picked
+           * up, so ignore it.
            */
-          const busyWith = acceptedRef.current?.from ?? incomingRef.current?.from ?? null;
-          if (busyWith === p.from) { stopReconnect(); return; }
+          if (acceptedRef.current?.from === p.from) { stopReconnect(); return; }
+
+          /**
+           * Already RINGING from this person: refresh rather than ignore.
+           *
+           * This used to bail out here, which meant a stale `incomingRef` — left behind when
+           * a previous call ended without a clean hang-up — silently swallowed every future
+           * offer from that person. No ring, no green button, and the call only ever showed
+           * up as a notification. Taking the newer offer instead keeps the freshest SDP and
+           * can't get stuck.
+           */
+          if (incomingRef.current?.from === p.from) {
+            stopReconnect();
+            incomingRef.current = { ...incomingRef.current, sdp: p.sdp ?? incomingRef.current.sdp };
+            setIncoming(incomingRef.current);
+            return;
+          }
 
           // A genuinely different caller while we're occupied — politely refuse.
           if (ringRef.current || acceptedRef.current) { s.emit("call:signal", { to: p.from, type: "end" }); return; }
@@ -241,6 +279,9 @@ export default function CallHost() {
         }
 
         if (p.type === "end") {
+          // Also clears the "connecting" screen — otherwise hanging up left the other person
+          // watching a spinner for a call that had already ended.
+          stopReconnect();
           stopRing();
           incomingRef.current = null;
           iceBufRef.current = [];
@@ -250,6 +291,19 @@ export default function CallHost() {
 
       handlerRef.current = onSignal as unknown as (p: never) => void;
       s.on("call:signal", handlerRef.current);
+
+      /**
+       * "That call is over."
+       *
+       * Sent when we asked to resume a call the server holds no offer for — which almost
+       * always means a stale notification was tapped. Say so briefly and clear the screen,
+       * rather than spinning on "connecting" for fifteen seconds.
+       */
+      s.on("call:none", (() => {
+        stopReconnect();
+        setCallGone(true);
+        setTimeout(() => setCallGone(false), 2600);
+      }) as unknown as (p: never) => void);
 
       claimPendingCall(); // cold start: answered while the app wasn't running
     })();
@@ -308,6 +362,17 @@ export default function CallHost() {
 
   // Answered from the notification, waiting on the caller's fresh offer. Without this the
   // app opened to whatever screen was last shown and looked like the button did nothing.
+  if (!incoming && callGone) {
+    return (
+      <div dir={dir} className="fixed inset-0 z-[70] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-3 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
+        <span className="grid h-20 w-20 place-items-center rounded-full bg-white/15">
+          <PhoneOff className="h-8 w-8" />
+        </span>
+        <p className="text-[15px] font-extrabold">{t("call.alreadyEnded")}</p>
+      </div>
+    );
+  }
+
   if (!incoming && reconnecting) {
     return (
       <div dir={dir} className="fixed inset-0 z-[70] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-4 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
