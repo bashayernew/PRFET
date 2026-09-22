@@ -98,6 +98,21 @@ export default function CallOverlay({
         };
         pc.onicecandidate = (e) => { if (e.candidate) sock.emit("call:signal", { to: peerId, type: "ice", candidate: e.candidate }); };
 
+        /**
+         * Report how the media path ends up.
+         *
+         * A call can pass every step here — mic acquired, offer sent, answer received — and
+         * still have no audio, because the two phones never find a route to each other. That
+         * shows as "failed" here and as nothing at all in the server log, which is why it
+         * kept looking like the answer button was broken.
+         */
+        pc.onconnectionstatechange = () => {
+          const st = pc.connectionState;
+          if (st === "connected" || st === "failed" || st === "disconnected") {
+            apiPost("/api/call/diag", { stage: "connect", detail: st, peerId }, getAccessToken() || undefined).catch(() => {});
+          }
+        };
+
         const onSignal = async (p: Signal) => {
           if (p.from !== peerId) return;
           if (p.type === "answer" && p.sdp) { await pc.setRemoteDescription(p.sdp as RTCSessionDescriptionInit); }
@@ -146,6 +161,16 @@ export default function CallOverlay({
         // Most often: the person blocked the microphone, or there is no mic at all.
         // Without this the promise rejected silently and the call just never started.
         console.error("[call] failed to start:", err);
+        // Report it to the server too — see /api/call/diag. This is the only way we get to
+        // see a device-side failure on a phone we can't attach a debugger to.
+        {
+          const e = err as { name?: string; message?: string };
+          apiPost("/api/call/diag", {
+            stage: "getUserMedia",
+            detail: `${e?.name || "unknown"}: ${e?.message || ""}`.slice(0, 300),
+            peerId,
+          }, getAccessToken() || undefined).catch(() => {});
+        }
         // Keep the reason. "Couldn't reach the microphone" is true but useless when a
         // tester reports it: NotAllowedError (permission refused — on Android the app
         // itself may never have been granted RECORD_AUDIO) and NotFoundError (no mic at

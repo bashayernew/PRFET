@@ -7,7 +7,7 @@ import { useI18n } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiPost, apiGet, getAccessToken } from "@/lib/api";
 import { useFastSpring, fastspringEnabled, FS_PATHS } from "@/components/fastspring-checkout";
-import { isNative, initPurchases, buy, restore } from "@/lib/iap";
+import { isNative, initPurchases, buy, restore, listProducts } from "@/lib/iap";
 import { SUB_PRODUCTS, ADDON_PRODUCTS } from "@/lib/iap-products";
 
 // Fill {placeholders} in a translated string with live numbers from the dashboard settings.
@@ -36,6 +36,8 @@ export default function SubscribeScreen() {
   const [uid, setUid] = useState("");
   /** Running inside the Capacitor shell — decides store checkout vs web checkout. */
   const [native, setNative] = useState(false);
+  /** productId -> the store's own localised price string, e.g. "KWD 1.850". */
+  const [storePrices, setStorePrices] = useState<Record<string, string>>({});
   const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
@@ -50,6 +52,21 @@ export default function SubscribeScreen() {
       apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
         if (r.ok && r.data?.user?.id) initPurchases(r.data.user.id);
       });
+      /**
+       * Inside the app, show the price the STORE will actually charge.
+       *
+       * The dashboard price and the Play/App Store price are separate systems and nothing
+       * syncs them — change the dashboard and the app advertises one number while Google
+       * bills another, which is both dishonest to the user and a store policy problem.
+       * `priceString` is the authoritative figure, already localised (a Kuwaiti user sees
+       * KWD, not converted dollars), so it can't drift out of date.
+       */
+      listProducts().then((items) => {
+        if (!items.length) return;
+        const map: Record<string, string> = {};
+        for (const it of items) if (it.identifier && it.priceString) map[it.identifier] = it.priceString;
+        setStorePrices(map);
+      }).catch(() => { /* fall back to the dashboard figure */ });
     });
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
@@ -72,6 +89,8 @@ export default function SubscribeScreen() {
   }, []);
 
   const price = tier === "vip" ? vipMonthly : goldMonthly;
+  /** What to put on screen: the store's figure in the app, the dashboard's on the web. */
+  const shownPrice = storePrices[tier === "vip" ? SUB_PRODUCTS.vip1m : SUB_PRODUCTS.basic1m] ?? `$${price}`;
 
   /**
    * Add-ons. Inside the native app this MUST go through the store — see buyPlan below.
@@ -174,7 +193,7 @@ export default function SubscribeScreen() {
               <p className="text-[12.5px] font-medium text-muted">{t("premium.tagline")}</p>
             </div>
             <div className="text-end">
-              <p dir="ltr" className="text-[22px] font-extrabold text-brand-700">${price}</p>
+              <p dir="ltr" className="text-[22px] font-extrabold text-brand-700">{shownPrice}</p>
               <p className="text-[10.5px] font-bold text-muted">{t("premium.perMonth")}</p>
             </div>
           </div>
@@ -199,9 +218,9 @@ export default function SubscribeScreen() {
         <div className="mt-4 rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
           <p className="mb-3 text-[14px] font-extrabold text-ink">{t("premium.addonsTitle")}</p>
           <div className="flex flex-col gap-2.5">
-            <Addon icon={<Phone className="h-4 w-4" />} title={t("premium.addonVoice")} sub={t("premium.addonVoiceSub")} price={addon.voice} per={t("premium.m1")} onBuy={() => buyAddon("voice")} disabled={buying} />
-            <Addon icon={<ImageIcon className="h-4 w-4" />} title={t("premium.addonMedia")} sub={t("premium.addonMediaSub")} price={addon.media} per={t("premium.m1")} onBuy={() => buyAddon("media")} disabled={buying} />
-            <Addon icon={<HardDrive className="h-4 w-4" />} title={t("premium.addonStorage")} sub={t("premium.addonStorageSub")} price={addon.storage} per={t("premium.m3")} onBuy={() => buyAddon("storage")} disabled={buying} />
+            <Addon icon={<Phone className="h-4 w-4" />} title={t("premium.addonVoice")} sub={t("premium.addonVoiceSub")} priceLabel={storePrices[ADDON_PRODUCTS.voice] ?? `$${addon.voice}`} per={t("premium.m1")} onBuy={() => buyAddon("voice")} disabled={buying} />
+            <Addon icon={<ImageIcon className="h-4 w-4" />} title={t("premium.addonMedia")} sub={t("premium.addonMediaSub")} priceLabel={storePrices[ADDON_PRODUCTS.media] ?? `$${addon.media}`} per={t("premium.m1")} onBuy={() => buyAddon("media")} disabled={buying} />
+            <Addon icon={<HardDrive className="h-4 w-4" />} title={t("premium.addonStorage")} sub={t("premium.addonStorageSub")} priceLabel={storePrices[ADDON_PRODUCTS.storage] ?? `$${addon.storage}`} per={t("premium.m3")} onBuy={() => buyAddon("storage")} disabled={buying} />
           </div>
           <p className="mt-3 text-[11px] font-medium leading-snug text-muted">{t("premium.addonsHint")}</p>
         </div>
@@ -222,7 +241,7 @@ export default function SubscribeScreen() {
                 disabled={buying}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 py-3.5 text-[14px] font-extrabold text-white disabled:opacity-60 active:scale-95"
               >
-                <Crown className="h-4 w-4" /> {t("premium.subscribeCard").replace("{price}", `$${price}`)}
+                <Crown className="h-4 w-4" /> {t("premium.subscribeCard").replace("{price}", shownPrice)}
               </button>
               {/* Stores require a visible way to restore a purchase — without it, anyone who
                   reinstalls or changes phone loses what they paid for, and review flags it. */}
@@ -265,7 +284,8 @@ function Perk({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function Addon({ icon, title, sub, price, per, onBuy, disabled }: { icon: React.ReactNode; title: string; sub: string; price: number; per: string; onBuy: () => void; disabled?: boolean }) {
+/** `priceLabel` so the store's own string can be passed through when we have one. */
+function Addon({ icon, title, sub, priceLabel, per, onBuy, disabled }: { icon: React.ReactNode; title: string; sub: string; priceLabel: string; per: string; onBuy: () => void; disabled?: boolean }) {
   return (
     <button onClick={onBuy} disabled={disabled}
       className="flex w-full items-center gap-3 rounded-2xl border-2 border-slate-100 p-3 text-start transition-colors hover:border-brand-300 active:scale-[0.99] disabled:opacity-50">
@@ -275,7 +295,7 @@ function Addon({ icon, title, sub, price, per, onBuy, disabled }: { icon: React.
         <p className="text-[11.5px] font-medium text-muted">{sub}</p>
       </div>
       <div className="text-end">
-        <p dir="ltr" className="text-[15px] font-extrabold text-brand-700">${price}</p>
+        <p dir="ltr" className="text-[15px] font-extrabold text-brand-700">{priceLabel}</p>
         <p className="text-[10px] font-bold text-muted">{per}</p>
       </div>
     </button>

@@ -69,6 +69,10 @@ export default function CallHost() {
       if (!callerId) return;
       native?.clearPendingCall?.(); // consume it, so a reload can't reopen the same call
 
+      // Tell the server we picked up from the notification, so the log shows this phone
+      // acting rather than us inferring it from a "ready" that may never arrive.
+      apiPost("/api/call/diag", { stage: "answered-notification", peerId: callerId }, getAccessToken() || undefined).catch(() => {});
+
       // Tell the user something is happening. Without this the screen just sits there
       // while we wait on the caller, which is indistinguishable from a dead button.
       setReconnecting(true);
