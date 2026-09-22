@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone, PhoneOff } from "lucide-react";
+import { Phone, PhoneOff, ChevronDown } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { apiGet, apiPost, getAccessToken } from "@/lib/api";
 import { getSocket } from "@/lib/socket";
@@ -41,6 +41,8 @@ export default function CallHost() {
   const [reconnecting, setReconnecting] = useState(false);
   /** Set when the server tells us the call we tried to resume no longer exists. */
   const [callGone, setCallGone] = useState(false);
+  /** Ring collapsed to a bar so the app stays usable while someone is calling. */
+  const [ringMinimized, setRingMinimized] = useState(false);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /** Stop asking the caller for a fresh offer, and clear the waiting screen. */
@@ -255,6 +257,7 @@ export default function CallHost() {
           const base: Incoming = { from: p.from, sdp: p.sdp ?? null, name: "…", avatarUrl: null };
           incomingRef.current = base;
           setIncoming(base);
+          setRingMinimized(false); // a new call always arrives full-screen
           startRing();
 
           // Read the token fresh — the one captured at mount may have since expired.
@@ -395,8 +398,52 @@ export default function CallHost() {
 
   if (!incoming) return null;
 
+  /**
+   * Ringing, collapsed to a bar.
+   *
+   * A full-screen incoming call makes the whole app unusable while it rings — you can't
+   * check who someone is before answering, or finish what you were typing. Collapsed, it
+   * keeps ringing with Answer and Decline always to hand.
+   */
+  if (ringMinimized) {
+    return (
+      <div dir={dir} className="fixed inset-x-0 top-0 z-[70] mx-auto max-w-[480px] px-2 pt-[calc(env(safe-area-inset-top)+6px)]">
+        <div className="flex items-center gap-3 rounded-2xl bg-brand-700/95 px-3 py-2 shadow-lg backdrop-blur">
+          <button onClick={() => setRingMinimized(false)} className="flex min-w-0 flex-1 items-center gap-2.5 text-start">
+            <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-white/15 text-[13px] font-extrabold text-white">
+              {incoming.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={incoming.avatarUrl} alt="" className="h-9 w-9 object-cover" />
+              ) : (
+                incoming.name.charAt(0).toUpperCase()
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-extrabold text-white">{incoming.name}</span>
+              <span className="block animate-pulse text-[11px] font-bold text-brand-100">{t("call.incoming")}</span>
+            </span>
+          </button>
+          <button onClick={() => decline()} aria-label={t("call.decline")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-500 text-white active:scale-95">
+            <PhoneOff className="h-4 w-4" />
+          </button>
+          <button onClick={accept} aria-label={t("call.accept")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500 text-white active:scale-95">
+            <Phone className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div dir={dir} className="fixed inset-0 z-[70] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
+      {/* Collapse the ring — the app stays usable and it keeps ringing. */}
+      <button
+        onClick={() => setRingMinimized(true)}
+        aria-label={t("call.minimize")}
+        className="absolute start-4 top-[calc(env(safe-area-inset-top)+12px)] grid h-10 w-10 place-items-center rounded-full bg-white/15 active:scale-95"
+      >
+        <ChevronDown className="h-5 w-5" />
+      </button>
       <span className="grid h-28 w-28 place-items-center overflow-hidden rounded-full bg-white/15 text-4xl font-extrabold">
         {incoming.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
