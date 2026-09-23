@@ -3,6 +3,7 @@ import { getAccessToken, refreshAccess } from "@/lib/api";
 
 let socket: any = null;
 let wiredAuthRecovery = false;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Access tokens expire after 15 minutes. The socket used to capture the token once at
@@ -50,24 +51,31 @@ export async function getSocket(_token?: string): Promise<any> {
         // NOTE: this used to call a non-existent `refreshAccessToken()`, which threw a
         // ReferenceError instead of refreshing — so an expired token left the socket dead
         // for the rest of the session (offline for calls, live chat and end-of-live events).
-        const ok = await refreshAccess();
-        console.warn("[socket] unauthorized — refreshed token:", ok);
-        /**
-         * Tell the server, over HTTP, that this device has no socket.
-         *
-         * A device stuck here keeps working for everything HTTP while being completely
-         * invisible to realtime: calls show `callee sockets: 0`, live comments never arrive,
-         * and nothing on the server says why. HTTP still works (that's the whole problem),
-         * so this report always gets through.
-         */
+        const fresh = await refreshAccess();
+        // Log only WHETHER it worked. The first version printed the token itself, which put
+        // a live JWT into the server log — anyone reading logs could have taken the session.
+        console.warn("[socket] unauthorized — refresh succeeded:", !!fresh);
         fetch("/api/call/diag", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
           },
-          body: JSON.stringify({ stage: "socket-unauthorized", detail: `refreshed=${ok}` }),
+          body: JSON.stringify({ stage: "socket-unauthorized", detail: `refreshed=${!!fresh}` }),
         }).catch(() => {});
+
+        /**
+         * Reconnect NOW with the new token instead of waiting for the backoff.
+         *
+         * Socket.IO retries on a growing delay, and each retry between the token expiring
+         * and the refresh completing is refused as "jwt expired". During that window the
+         * device has no socket at all: callers see `callee sockets: 0` and get pushed to a
+         * notification, live comments don't arrive, and the person looks offline. Forcing a
+         * fresh handshake closes the window to about a second.
+         */
+        if (fresh && socket) {
+          try { socket.disconnect(); socket.connect(); } catch { /* it'll retry on its own */ }
+        }
       } catch (e) {
         console.warn("[socket] token refresh threw:", e);
       } finally {
@@ -77,9 +85,25 @@ export async function getSocket(_token?: string): Promise<any> {
     });
   }
 
+  /**
+   * Keep the token fresh ahead of time.
+   *
+   * Access tokens last 15 minutes (ACCESS_TTL in lib/auth.ts). Waiting for a handshake to
+   * fail means every 15 minutes there's a gap where this device is invisible to realtime —
+   * uncallable, no live comments, shown as offline. Refreshing on a 12-minute cycle means
+   * the token is almost never actually expired when the socket needs it, and the recovery
+   * path above becomes the exception rather than the norm.
+   */
+  if (!refreshTimer) {
+    refreshTimer = setInterval(() => {
+      refreshAccess().catch(() => { /* the connect_error path is still there as a backstop */ });
+    }, 12 * 60 * 1000);
+  }
+
   return socket;
 }
 
 export function disconnectSocket() {
   if (socket) { try { socket.disconnect(); } catch {} socket = null; wiredAuthRecovery = false; }
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
 }
