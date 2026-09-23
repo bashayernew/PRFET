@@ -125,17 +125,9 @@ Google/Apple re-review every update. Display name: "PRFET Reviewer".
 3. **Google Play:** app icon/version → RevenueCat purchase flow + hide in-app FastSpring → Play
    Console account → products → AAB → testing → production.
 4. **FastSpring:** finish account activation, then flip the web storefront live.
-4b. **Gemini billing (RESOLVED 2026-08-18):** the AI 429s were `RESOURCE_EXHAUSTED` because the
-   app's project was linked to an EMPTY prepay billing account. Fixed by linking the project to a
-   funded billing account ("My Billing Account", ~$45) in Google Cloud Console → Billing. There's
-   also a **$300 free credit** (expires Nov 14 2026) that could be used via pay-as-you-go later.
-   Original note for reference:
-   the key's project is Tier 1 but on **PREPAY billing, and credits ran to $0**
-   → every AI call returns HTTP 429 `RESOURCE_EXHAUSTED "prepayment credits are depleted"`. Fix is
-   Google-side: top up the prepay balance OR switch the project to **standard pay-as-you-go
-   (postpaid)** billing at https://ai.studio/projects. No app change/redeploy needed. (App-side chat
-   throttle was REMOVED; the app never was the limiter.) Diagnose with a direct curl to
-   `generativelanguage.googleapis.com/.../gemini-flash-latest:generateContent` using GEMINI_API_KEY.
+4b. **Gemini — SOLVED 2026-09-23, and it was never billing.** `GEMINI_API_KEY` was missing its
+   variable name in `.env`, so it was `undefined` the whole time. Ignore the billing theories that
+   used to live here; see **"AI (Gemini)"** near the end of this file for what actually happened.
 5. Recent code (this session): per-user AI response cache + TTS cache (`lib/ai-cache.ts`); updated
    Terms (`app/terms/page.tsx`); AI throttle raised to 60/min chat + 120/min TTS and reworded
    (it's anti-abuse only — real limits are the dashboard caps); **plans page now pulls the
@@ -490,11 +482,65 @@ Play Console: **Full-screen intent permission declared as a calling app** (requi
   launch**. Over a 130 ms link that's seconds of pure waste. Needs care: it exists so the BleBridge
   JavaScript interface is visible to the page.
 
-## AI (Gemini)
-`GEMINI_API_KEY` regenerated 09-21 → still 402 `RESOURCE_EXHAUSTED`. **The key was never the problem:**
-the project's billing account ("My Billing Account", holding *Default Gemini Project*) was at
-**−$0.82**. A second account "PRFET APP" has $0 and **0 projects**, so funding it does nothing.
-Fix is in Google Cloud Billing, not in code. There's a "Redeem $10 in credits" offer in AI Studio.
+## AI (Gemini) — SOLVED 2026-09-23. The key was never in `.env`.
+
+Every earlier diagnosis in this file was wrong, including the one that used to be here (billing at
+−$0.82). The actual cause: **`.env` line 29 held the API key as a bare string with no variable name
+in front of it** —
+
+```
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=BLB8WQ...
+AQ.Ab8RN6IF2-vj66Sumd79...        ← no GEMINI_API_KEY= prefix
+GEMINI_IMAGE_MODEL=gemini-2.5-flash-image
+```
+
+so `process.env.GEMINI_API_KEY` was **undefined** for months, and the orphan key was stale anyway
+(`…IF2-vj66…`, while the console held `…LL78Undi…`). Fixed by deleting the loose line and appending
+a proper `GEMINI_API_KEY=` — server-only var, `up -d --force-recreate app`, no rebuild. Verified with
+a direct call: HTTP 200, `"text": "ok"`.
+
+**Why it was found late:** the error Google returns for a missing/invalid key looked close enough to
+the quota error that "billing" stayed the working theory across several sessions, and nobody checked
+that the variable existed. `docker compose exec app printenv GEMINI_API_KEY` would have settled it in
+five seconds.
+
+**Lesson worth generalising:** `.env` is unvalidated — a malformed line fails silently and the app
+just sees `undefined`. Sourcing it in bash (`set -a && . ./.env`) is a quick integrity check: it
+throws on anything that isn't `KEY=value`. Doing that also surfaced
+`NEXT_PUBLIC_REVENUECAT_ANDROID_KEY=<paste key>`, still a literal placeholder — in-app purchases
+cannot work until it's filled in, and being `NEXT_PUBLIC_` it needs a **full rebuild**, not a restart.
+
+## Phone OTP — status 2026-09-23
+
+**The app side works.** Verified by calling the API directly, bypassing the UI:
+
+```bash
+curl -s -w '\nHTTP %{http_code}\n' https://prfet.com/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"contactMethod":"phone","phone":"+96569993349","displayName":"Test User",
+       "password":"12345678","accountType":"personal","dateOfBirth":"1995-01-01",
+       "country":"KW","locale":"ar"}'
+```
+→ `HTTP 201 {"ok":true}`. The user row, the hashed OTP and the call into `sendOtpSms` all happen.
+
+**The blocker is the Twilio account tier:**
+```
+400 {"code":572006,"message":"Invalid template name. Trial accounts can only use predefined SMS templates."}
+```
+Trial accounts can no longer send free-form SMS at all — only Twilio's own templates. Our bilingual
+OTP body will be rejected every time regardless of code. Credentials, `TWILIO_FROM`
+(`+17372508034`) and routing are all correct.
+
+Two ways forward, no code change needed either way (`lib/sms.ts` already prefers kwtSMS for `+965`
+and falls back to Twilio):
+- **Upgrade Twilio** (~$20 minimum). Also lifts the verified-numbers-only trial rule. ~$0.32/SMS to
+  Kuwait — expensive, works immediately.
+- **kwtSMS** — ~KWD 0.015/msg and a local route that actually lands on Zain/Ooredoo/STC. Still not
+  provisioned; their signup form 404s, so contact them on WhatsApp **+965 9922-0322**.
+
+**Diagnosing:** an empty `[sms]`/`[twilio]` log does NOT mean the provider failed — `sendOtpSms`
+returns `false` and logs *nothing* when no provider is configured, so silence means it was never
+reached. Check `grep -E '^(KWTSMS_|TWILIO_)' .env` first.
 
 ## 🛡️ HOW TO STOP ALL THIS HAPPENING AGAIN
 
@@ -514,6 +560,16 @@ alert() / confirm()       // blocks the JS thread in a WebView
 **3. `typescript.ignoreBuildErrors: true` means type errors SHIP.** That's how a call to a
    non-existent function ran in production for weeks. Run `npx tsc --noEmit` locally before pushing.
    (Note: `prisma generate` must have run, or you get a wall of false errors about missing models.)
+
+**3b. Verify the env, don't trust it.** The Gemini outage was a key with no variable name on it —
+   undefined for months while we blamed billing. Before debugging any integration, prove the
+   variable actually reached the process:
+```bash
+cd ~/app/deploy && set -a && . ./.env && set +a   # throws on any malformed line
+docker compose exec app printenv | grep -E 'GEMINI|TWILIO|POSTMARK'
+```
+   Test the third-party API with curl **before** reading app code. Twice now that turned a
+   multi-session hunt into a two-minute answer.
 
 **4. Weekly, 30 seconds:**
 ```bash
