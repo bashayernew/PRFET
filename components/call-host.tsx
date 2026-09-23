@@ -406,21 +406,14 @@ export default function CallHost() {
    * keeps ringing with Answer and Decline always to hand.
    */
   if (ringMinimized) {
+    // Below the header, same reason as the in-call bar — it must never cover the back button.
     return (
-      <div dir={dir} className="fixed inset-x-0 top-0 z-[70] mx-auto max-w-[480px] px-2 pt-[calc(env(safe-area-inset-top)+6px)]">
-        <div className="flex items-center gap-3 rounded-2xl bg-brand-700/95 px-3 py-2 shadow-lg backdrop-blur">
-          <button onClick={() => setRingMinimized(false)} className="flex min-w-0 flex-1 items-center gap-2.5 text-start">
-            <span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-white/15 text-[13px] font-extrabold text-white">
-              {incoming.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={incoming.avatarUrl} alt="" className="h-9 w-9 object-cover" />
-              ) : (
-                incoming.name.charAt(0).toUpperCase()
-              )}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-extrabold text-white">{incoming.name}</span>
-              <span className="block animate-pulse text-[11px] font-bold text-brand-100">{t("call.incoming")}</span>
+      <div dir={dir} className="fixed end-3 z-[70] flex justify-end" style={{ top: "calc(env(safe-area-inset-top) + 68px)" }}>
+        <div className="flex items-center gap-2.5 rounded-full bg-brand-700/95 py-1.5 pe-1.5 ps-3 shadow-lg backdrop-blur">
+          <button onClick={() => setRingMinimized(false)} className="flex min-w-0 items-center gap-2 text-start">
+            <span className="min-w-0 max-w-[110px]">
+              <span className="block truncate text-[12.5px] font-extrabold leading-tight text-white">{incoming.name}</span>
+              <span className="block animate-pulse text-[10.5px] font-bold leading-tight text-brand-100">{t("call.incoming")}</span>
             </span>
           </button>
           <button onClick={() => decline()} aria-label={t("call.decline")} className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-500 text-white active:scale-95">

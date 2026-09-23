@@ -446,15 +446,16 @@ export default function CallOverlay({
    * A full-screen overlay made the app unusable for the duration.
    */
   if (minimized) {
+    // Floats BELOW the header, not over it. Pinned to top-0 it covered the back button and
+    // the screen title, so the app was visible but not navigable — worse than useless.
     return (
-      <div className="fixed inset-x-0 top-0 z-[60] mx-auto max-w-[480px] px-2 pt-[calc(env(safe-area-inset-top)+6px)]">
+      <div className="fixed end-3 z-[60] flex justify-end" style={{ top: "calc(env(safe-area-inset-top) + 68px)" }}>
         <audio ref={audioRef} autoPlay />
-        <div className="flex items-center gap-3 rounded-2xl bg-brand-700/95 px-3 py-2 shadow-lg backdrop-blur">
-          <button onClick={() => setMinimized(false)} className="flex min-w-0 flex-1 items-center gap-2.5 text-start">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/15 text-[13px] font-extrabold text-white">{peerName.charAt(0)}</span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-extrabold text-white">{peerName}</span>
-              <span className="block text-[11px] font-bold text-brand-100" dir="ltr">
+        <div className="flex items-center gap-2.5 rounded-full bg-brand-700/95 py-1.5 pe-1.5 ps-3 shadow-lg backdrop-blur">
+          <button onClick={() => setMinimized(false)} className="flex min-w-0 items-center gap-2 text-start">
+            <span className="min-w-0 max-w-[110px]">
+              <span className="block truncate text-[12.5px] font-extrabold leading-tight text-white">{peerName}</span>
+              <span className="block text-[10.5px] font-bold leading-tight text-brand-100" dir="ltr">
                 {status === "in-call" ? mmss : status === "ringing" ? t("call.ringing") : t("call.connecting")}
               </span>
             </span>

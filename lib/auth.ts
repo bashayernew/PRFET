@@ -5,7 +5,20 @@ import jwt from "jsonwebtoken";
 const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || "dev-access-secret-change-me";
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me";
 
-const ACCESS_TTL = "15m";
+/**
+ * 15 minutes was too aggressive for an app built on a persistent socket.
+ *
+ * Socket.IO authenticates ONCE at handshake, so the moment the token expires the connection
+ * is refused and the device drops off realtime entirely — uncallable (`callee sockets: 0`),
+ * no live comments, shown as offline — until the client notices and refreshes. At 15 minutes
+ * that gap opened four times an hour on every device.
+ *
+ * One hour, combined with the client refreshing every 12 minutes (lib/socket.ts), means the
+ * token is realistically never expired when the socket needs it. The refresh token is still
+ * the thing that controls how long a session really lives, so this doesn't extend access for
+ * someone whose session has been revoked by more than an hour.
+ */
+const ACCESS_TTL = "1h";
 const REFRESH_TTL_DAYS = 30;
 
 /** Password hashing (bcrypt). Upgrade to Argon2id before production scale if desired. */
