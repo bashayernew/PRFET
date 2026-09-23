@@ -50,9 +50,26 @@ export async function getSocket(_token?: string): Promise<any> {
         // NOTE: this used to call a non-existent `refreshAccessToken()`, which threw a
         // ReferenceError instead of refreshing — so an expired token left the socket dead
         // for the rest of the session (offline for calls, live chat and end-of-live events).
-        await refreshAccess();
-      } catch {
-        /* refresh failed — Socket.IO keeps retrying; a dead session just stays dead */
+        const ok = await refreshAccess();
+        console.warn("[socket] unauthorized — refreshed token:", ok);
+        /**
+         * Tell the server, over HTTP, that this device has no socket.
+         *
+         * A device stuck here keeps working for everything HTTP while being completely
+         * invisible to realtime: calls show `callee sockets: 0`, live comments never arrive,
+         * and nothing on the server says why. HTTP still works (that's the whole problem),
+         * so this report always gets through.
+         */
+        fetch("/api/call/diag", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}),
+          },
+          body: JSON.stringify({ stage: "socket-unauthorized", detail: `refreshed=${ok}` }),
+        }).catch(() => {});
+      } catch (e) {
+        console.warn("[socket] token refresh threw:", e);
       } finally {
         // Small gap so a permanently-invalid session can't spin in a tight loop.
         setTimeout(() => { refreshing = false; }, 5000);

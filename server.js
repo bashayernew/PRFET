@@ -126,14 +126,31 @@ app.prepare().then(() => {
   }
 
   // JWT handshake — only authenticated users get a socket.
+  /**
+   * JWT handshake. Rejections are LOGGED, not swallowed.
+   *
+   * A device whose handshake keeps failing has no socket, so everything it emits — call:ready,
+   * live-room joins, chat — silently goes nowhere while HTTP requests keep working normally.
+   * That looks exactly like "the app is broken" and was invisible from the server: the only
+   * clue was `callee sockets: 0`. An expired access token that fails to refresh is the usual
+   * cause, and `jwt.verify` names it (`TokenExpiredError`).
+   */
   io.use((socket, nextFn) => {
+    const token = socket.handshake.auth && socket.handshake.auth.token;
+    if (!token) {
+      console.log(`[socket] handshake refused: no token (ip ${socket.handshake.address})`);
+      return nextFn(new Error("unauthorized"));
+    }
     try {
-      const token = socket.handshake.auth && socket.handshake.auth.token;
       const decoded = jwt.verify(token, ACCESS_SECRET);
-      if (decoded.type !== "access") return nextFn(new Error("unauthorized"));
+      if (decoded.type !== "access") {
+        console.log(`[socket] handshake refused: wrong token type "${decoded.type}"`);
+        return nextFn(new Error("unauthorized"));
+      }
       socket.data.userId = decoded.sub;
       nextFn();
-    } catch {
+    } catch (e) {
+      console.log(`[socket] handshake refused: ${e && e.name} — ${e && e.message}`);
       nextFn(new Error("unauthorized"));
     }
   });
@@ -285,7 +302,19 @@ app.prepare().then(() => {
         return;
       }
 
-      console.log(`[call] ready ${uid} -> ${p.to} (no stored offer — asking for a fresh one)`);
+      /**
+       * No held offer means this is almost certainly a STALE notification.
+       *
+       * The call notification is deliberately ongoing and non-dismissable so it can't be
+       * swiped away mid-ring — which also means an unanswered call leaves it in the tray
+       * forever. Tapping one an hour later asks us to resume a call that no longer exists.
+       *
+       * Tell the phone so it can say "call ended" and get out of the way, instead of sitting
+       * on "connecting" for fifteen seconds. We still ping the caller, because the other
+       * reason we get here is a genuine race where their offer hasn't landed yet.
+       */
+      console.log(`[call] ready ${uid} -> ${p.to} (no stored offer — likely a stale notification)`);
+      socket.emit("call:none", { from: p.to });
       io.to(p.to).emit("call:ready", { from: uid });
     });
 
