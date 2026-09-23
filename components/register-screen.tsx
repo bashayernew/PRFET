@@ -67,6 +67,9 @@ export default function RegisterScreen() {
   const [avatar, setAvatar] = useState<string | null>(null);
   const [name, setName] = useState(""); // public / business name
   const [email, setEmail] = useState("");
+  /** Sign up with an email address or a phone number — the code goes to whichever. */
+  const [contactMethod, setContactMethod] = useState<"email" | "phone">("email");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [agree, setAgree] = useState(false);
@@ -112,7 +115,7 @@ export default function RegisterScreen() {
   }, [name, email, nationality, gender, dob, address]);
 
   const isBusiness = account === "business";
-  const contactValid = emailOk(email);
+  const contactValid = contactMethod === "email" ? emailOk(email) : phoneOk(phone);
   const contactError = touchedContact && email.length > 0 && !emailOk(email);
   const passwordOk = password.length === 0 || password.length >= 8;
 
@@ -151,14 +154,15 @@ export default function RegisterScreen() {
     setSubmitting(true);
     setError(null);
 
-    const identifier = email.trim().toLowerCase();
+    const identifier = contactMethod === "email" ? email.trim().toLowerCase() : phone.trim();
 
-    // signup is now minimal and email-only: name, nationality, email (+ optional password).
-    // Country and all preference toggles live in Settings after signup.
+    // Email or phone — the server sends the code down whichever channel was chosen
+    // (lib/email.ts or lib/sms.ts). Country and preferences live in Settings after signup.
     const res = await apiPost<{ devCode?: string; error?: string }>("/api/auth/register", {
       accountType: account,
-      contactMethod: "email",
-      email: email.trim().toLowerCase(),
+      contactMethod,
+      email: contactMethod === "email" ? email.trim().toLowerCase() : undefined,
+      phone: contactMethod === "phone" ? phone.trim() : undefined,
       password: password || undefined,
       displayName: name.trim(),
       avatarUrl: avatar || undefined,
@@ -295,9 +299,41 @@ export default function RegisterScreen() {
           </motion.div>
         )}
 
-        {/* email — the only sign-up method; the verification code is sent here */}
+        {/* Email or phone — the verification code goes to whichever is chosen. */}
         <motion.div variants={fadeUp} custom={i++} initial="hidden" animate="show">
-          <Field label={t("register.email")} icon={<Mail className="h-5 w-5" />} value={email} onChange={setEmail} onBlur={() => setTouchedContact(true)} placeholder={t("register.emailPh")} type="email" ltrInput error={contactError ? t("register.emailInvalid") : undefined} />
+          <div className="mb-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setContactMethod("email"); setTouchedContact(false); }}
+              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "email" ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
+            >
+              {t("register.email")}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setContactMethod("phone"); setTouchedContact(false); }}
+              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "phone" ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
+            >
+              {t("register.phone")}
+            </button>
+          </div>
+
+          {contactMethod === "email" ? (
+            <Field label={t("register.email")} icon={<Mail className="h-5 w-5" />} value={email} onChange={setEmail} onBlur={() => setTouchedContact(true)} placeholder={t("register.emailPh")} type="email" ltrInput error={contactError ? t("register.emailInvalid") : undefined} />
+          ) : (
+            <Field
+              label={t("register.phone")}
+              icon={<Phone className="h-5 w-5" />}
+              value={phone}
+              onChange={setPhone}
+              onBlur={() => setTouchedContact(true)}
+              placeholder={t("register.phonePh")}
+              type="tel"
+              ltrInput
+              hint={t("register.phoneHint")}
+              error={contactError ? t("register.phoneInvalid") : undefined}
+            />
+          )}
         </motion.div>
 
         {/* password (optional) */}
