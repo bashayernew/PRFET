@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Search, UserPlus, ShieldBan, ShieldCheck, Trash2, RotateCcw, Loader2, X, Ban,
+  Search, UserPlus, ShieldBan, ShieldCheck, Trash2, RotateCcw, Loader2, X, Ban, ExternalLink,
 } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { apiGet, apiPost, apiPatch, getAccessToken } from "@/lib/api";
@@ -57,16 +57,29 @@ export default function AdminUsers() {
 
   const say = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2200); };
 
+  /**
+   * Nothing loads until you actually look for someone.
+   *
+   * Listing every member by default meant the page fetched hundreds of rows and avatars on
+   * open — slow, and useless, since finding one person is what this page is for. A status
+   * filter is the exception: "blocked", "restricted" and "disabled" are small, finite sets
+   * that an admin genuinely wants to browse.
+   */
+  const term = q.trim();
+  const browsing = status !== "all";
+  const active = term.length >= 2 || browsing;
+
   const load = useCallback(async () => {
+    if (!active) { setRows([]); setLoading(false); return; }
     setLoading(true);
     const token = getAccessToken() || undefined;
     const res = await apiGet<{ users: Row[] }>(
-      `/api/admin/users?scope=manage&status=${status}&take=100${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ""}`,
+      `/api/admin/users?scope=manage&status=${status}&take=100${term ? `&q=${encodeURIComponent(term)}` : ""}`,
       token,
     );
     if (res.ok && res.data?.users) setRows(res.data.users);
     setLoading(false);
-  }, [q, status]);
+  }, [term, status, active]);
 
   // Debounced so typing a name doesn't fire a query per keystroke.
   useEffect(() => {
@@ -123,7 +136,12 @@ export default function AdminUsers() {
       </div>
 
       {/* ===== list ===== */}
-      {loading ? (
+      {!active ? (
+        <div className="py-14 text-center">
+          <Search className="mx-auto mb-3 h-8 w-8 text-muted/40" />
+          <p className="text-[13.5px] font-bold text-muted">{t("adm.usrSearchPrompt")}</p>
+        </div>
+      ) : loading ? (
         <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted" /></div>
       ) : rows.length === 0 ? (
         <p className="py-10 text-center text-[13px] font-semibold text-muted">{t("adm.usrNone")}</p>
@@ -131,12 +149,16 @@ export default function AdminUsers() {
         <div className="space-y-2">
           {rows.map((u) => (
             <div key={u.id} className="flex items-center gap-3 rounded-2xl border border-black/10 bg-white p-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={u.avatarUrl || "/avatar.png"}
-                alt=""
-                className="h-10 w-10 shrink-0 rounded-full object-cover"
-              />
+              {/* No /avatar.png exists in public/ — pointing at it gave every row a broken
+                  image icon. Fall back to an initial, the same as the Grants list does. */}
+              {u.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={u.avatarUrl} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+              ) : (
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-[14px] font-extrabold text-brand-600">
+                  {(u.name || "•").charAt(0).toUpperCase()}
+                </span>
+              )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[14px] font-extrabold text-ink">
                   {u.name}
@@ -326,7 +348,19 @@ function ManageSheet({
           <p className="truncate text-[16px] font-extrabold text-ink">{user.name}</p>
           <button onClick={onClose}><X className="h-5 w-5 text-muted" /></button>
         </div>
-        <p className="mb-4 truncate text-[12px] font-semibold text-muted" dir="ltr">{user.email || user.phone}</p>
+        <p className="mb-3 truncate text-[12px] font-semibold text-muted" dir="ltr">{user.email || user.phone}</p>
+
+        {/* Opens the member's public profile in a new tab, so the dashboard and whatever
+            block you were about to apply stay where they are. */}
+        <a
+          href={`/business/${user.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-4 flex items-center justify-center gap-2 rounded-2xl border border-black/10 py-2.5 text-[13px] font-extrabold text-ink"
+        >
+          <ExternalLink className="h-4 w-4" />
+          {t("adm.usrViewProfile")}
+        </a>
 
         {/* current state */}
         {user.suspended && (
