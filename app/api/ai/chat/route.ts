@@ -6,6 +6,7 @@ import { premiumLapsed } from "@/lib/premium";
 import { geminiChat, geminiConfigured, type Turn } from "@/lib/gemini";
 import { msgCapCheck, msgBump } from "@/lib/ai-usage";
 import { cacheKey, cacheGet, cacheSet } from "@/lib/ai-cache";
+import { guard } from "@/lib/guard";
 
 /**
  * The AI assistant.
@@ -79,6 +80,10 @@ export async function POST(req: Request) {
 
   const blocked = await gate(user);
   if (blocked) return NextResponse.json({ error: blocked }, { status: 403 });
+
+  // Admin moderation: the AI assistant can be switched off for one member.
+  const mod = await guard(req, "ai");
+  if ("response" in mod) return mod.response;
 
   // Monthly assistant-message cap (dashboard-editable). Admins are unlimited.
   const cap = await msgCapCheck(user.id);

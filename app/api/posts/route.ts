@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
+import { guard } from "@/lib/guard";
 
 const createSchema = z.object({
   kind: z.enum(["image", "video"]).default("image"),
@@ -79,9 +80,10 @@ export async function GET(req: Request) {
 
 // POST /api/posts — publish an image post or a video reel.
 export async function POST(req: Request) {
-  const token = bearerFromRequest(req);
-  const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // Auth + "is this member allowed to post at all" in one step.
+  const g = await guard(req, "posts");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }

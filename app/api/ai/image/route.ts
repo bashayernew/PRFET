@@ -6,6 +6,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { premiumLapsed } from "@/lib/premium";
 import { geminiImage } from "@/lib/gemini";
 import { aiCapCheck, aiCapBump } from "@/lib/ai-usage";
+import { guard } from "@/lib/guard";
 
 const schema = z.object({
   prompt: z.string().min(1).max(1000),
@@ -14,9 +15,9 @@ const schema = z.object({
 
 // POST /api/ai/image — generate one image from a prompt (Imagen via the Gemini API).
 export async function POST(req: Request) {
-  const token = bearerFromRequest(req);
-  const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const g = await guard(req, "ai");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   // Per-user anti-abuse guard (real limit is the dashboard image cap below).
   const rl = rateLimit(req, "ai-image:" + payload.sub, 10, 60_000);

@@ -5,6 +5,7 @@ import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, adPrice } from "@/lib/pricing";
 import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
+import { guard } from "@/lib/guard";
 
 const ALLOWED_DAYS = [1, 2, 3, 7, 15, 30];
 
@@ -55,8 +56,9 @@ const createSchema = z.object({
 
 // POST /api/ads — submit a new ad (status: pending review).
 export async function POST(req: Request) {
-  const payload = auth(req);
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const g = await guard(req, "ads");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   // master switch: when ads are paused from the dashboard, posting still works but is FREE.
   const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { adsEnabled: true } });

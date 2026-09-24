@@ -34,6 +34,26 @@ model User {
   // Moderation — set from the admin dashboard when a report is actioned
   suspendedUntil DateTime? // account locked until this moment (null = not suspended)
   suspendReason  String?
+  // When the general block started. Needed only so the block screen can show progress
+  // ("day 3 of 14") rather than just a bare countdown.
+  suspendedAt    DateTime?
+  // Soft delete. The row and everything hanging off it stay put so reports, invoices and
+  // conversations still resolve; the account simply stops existing as far as the app is
+  // concerned. Hard deletion is a separate, deliberate purge.
+  disabledAt     DateTime?
+  disabledReason String?
+  // Partial blocks — the admin restricts individual features instead of the whole account.
+  // Kept separate from suspendedUntil because a partial block must still let the person log
+  // in and use everything they haven't been restricted from.
+  restrictUntil  DateTime? // null with any flag set = restricted until an admin lifts it
+  restrictReason String?
+  blockCalls     Boolean @default(false)
+  blockPosts     Boolean @default(false)
+  blockAi        Boolean @default(false)
+  blockJobs      Boolean @default(false) // posting a job AND browsing openings
+  blockAds       Boolean @default(false)
+  blockChat      Boolean @default(false)
+  blockRooms     Boolean @default(false) // live rooms: hosting and joining
 
   // Personal-only
   dateOfBirth DateTime?

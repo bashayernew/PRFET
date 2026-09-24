@@ -13,6 +13,7 @@ import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPatch, apiPost, apiUpload, apiDelete, getAccessToken } from "@/lib/api";
 import { getCountry, COUNTRIES } from "@/lib/countries";
 import { invalidateOpenCountries } from "@/lib/use-open-countries";
+import AdminUsers from "@/components/admin-users";
 
 type Settings = {
   adminEmail: string; supportPhone: string; whatsapp: string;
@@ -97,7 +98,7 @@ type Rep = {
   reporter: RepUser | null; target: RepUser | null; mediaUrl: string | null; contentText: string | null;
 };
 
-type Tab = "stats" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "invoices" | "broadcast" | "subscription" | "page";
+type Tab = "stats" | "users" | "archive" | "reports" | "countries" | "grants" | "sponsor" | "invoices" | "broadcast" | "subscription" | "page";
 
 type Invoice = {
   id: string; number: string; customerName: string; kind: string;
@@ -748,6 +749,7 @@ export default function AdminScreen() {
 
   const NAV: { k: Tab; icon: React.ReactNode; label: string; badge?: number }[] = [
     { k: "stats", icon: <BarChart3 className="h-[18px] w-[18px]" />, label: t("adm.tabStats") },
+    { k: "users", icon: <Users className="h-[18px] w-[18px]" />, label: t("adm.tabUsers") },
     { k: "archive", icon: <Archive className="h-[18px] w-[18px]" />, label: t("adm.tabArchive") },
     { k: "reports", icon: <Flag className="h-[18px] w-[18px]" />, label: t("adm.tabReports"), badge: stats?.reportsOpen || 0 },
     { k: "countries", icon: <Globe2 className="h-[18px] w-[18px]" />, label: t("adm.tabCountries"), badge: closedSet.size },
@@ -800,6 +802,8 @@ export default function AdminScreen() {
       {/* ===== main ===== */}
       <main className="w-full flex-1 px-4 pb-10 pt-16 md:px-8 md:pt-8 lg:px-12">
         {/* ---------- STATS ---------- */}
+        {tab === "users" && <AdminUsers />}
+
         {tab === "stats" && (
           <>
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

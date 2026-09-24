@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
+import { guard } from "@/lib/guard";
 
 const createSchema = z.object({
   title: z.string().min(2).max(120),
@@ -105,9 +106,10 @@ export async function GET(req: Request) {
 
 // POST /api/meetings — create a room; host joins as participant.
 export async function POST(req: Request) {
-  const token = bearerFromRequest(req);
-  const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // Hosting a live room. Joining one is gated in server.js on the socket side.
+  const g = await guard(req, "rooms");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }

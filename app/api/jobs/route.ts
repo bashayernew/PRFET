@@ -5,6 +5,8 @@ import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { getPrices, AD_MONTH_MS } from "@/lib/pricing";
 import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 import { isNativeRequest, spendCredits, toCents } from "@/lib/credits";
+import { guard } from "@/lib/guard";
+import { MODERATION_SELECT, featureDenial, type ModerationState } from "@/lib/moderation";
 
 const schema = z.object({
   title: z.string().min(2).max(120),
@@ -35,6 +37,20 @@ export async function GET(req: Request) {
 
   const token = bearerFromRequest(req);
   const payload = token ? verifyAccessToken(token) : null;
+
+  // The admin's "jobs" restriction covers browsing openings as well as posting one, so a
+  // restricted member gets refused here too rather than just losing the post button.
+  if (payload) {
+    const mod = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { isAdmin: true, ...MODERATION_SELECT },
+    });
+    if (mod && !mod.isAdmin) {
+      const denial = featureDenial(mod as ModerationState, "jobs");
+      if (denial) return NextResponse.json(denial, { status: 403 });
+    }
+  }
+
   const countries = country ? country.split(",").filter(Boolean) : [];
 
   const jobs = await prisma.job.findMany({
@@ -93,9 +109,10 @@ export async function GET(req: Request) {
 
 // POST /api/jobs — publish a job opening.
 export async function POST(req: Request) {
-  const token = bearerFromRequest(req);
-  const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // "jobs" covers both posting a job and browsing openings, per the admin's single toggle.
+  const g = await guard(req, "jobs");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   // master switch: when jobs are paused from the dashboard, posting still works but is FREE.
   const feat = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { jobsEnabled: true } });

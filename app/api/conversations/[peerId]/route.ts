@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
+import { guard } from "@/lib/guard";
 
 function auth(req: Request) {
   const token = bearerFromRequest(req);
@@ -57,8 +58,11 @@ const sendSchema = z.object({
 
 // POST /api/conversations/:peerId — send a message.
 export async function POST(req: Request, { params }: { params: Promise<{ peerId: string }> }) {
-  const payload = auth(req);
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  // Sending a DM. Reading a thread is left alone on purpose — a blocked member can still
+  // see what was said to them, they just can't reply.
+  const g = await guard(req, "chat");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
   const { peerId } = await params;
 
   let raw: unknown;

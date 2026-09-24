@@ -184,6 +184,25 @@ app.prepare().then(() => {
     socket.on("meeting:join", async (p) => {
       const mid = p && p.meetingId;
       if (!mid) return;
+
+      // Admin moderation: a member restricted from live rooms can't join one either.
+      // Mirrors lib/moderation.ts — a flag with no restrictUntil means "until lifted".
+      const mod = await prisma.user
+        .findUnique({
+          where: { id: uid },
+          select: { isAdmin: true, blockRooms: true, restrictUntil: true, suspendedUntil: true, disabledAt: true },
+        })
+        .catch(() => null);
+      if (mod && !mod.isAdmin) {
+        const suspended = mod.suspendedUntil && mod.suspendedUntil.getTime() > Date.now();
+        const restricted = mod.blockRooms && (!mod.restrictUntil || mod.restrictUntil.getTime() > Date.now());
+        if (mod.disabledAt || suspended || restricted) {
+          console.log(`[meet] join refused ${uid} -> ${mid} | blocked by admin`);
+          socket.emit("meeting:blocked", { meetingId: mid });
+          return;
+        }
+      }
+
       const part = await prisma.meetingParticipant
         .findUnique({ where: { meetingId_userId: { meetingId: mid, userId: uid } } })
         .catch(() => null);
@@ -252,7 +271,27 @@ app.prepare().then(() => {
     });
 
     // WebRTC signaling relay for 1:1 calls (offer/answer/ICE) — used by the calls feature.
-    socket.on("call:signal", (p) => {
+    socket.on("call:signal", async (p) => {
+      // Only the offer is gated: it's the act of starting a call. Answer and ICE belong to
+      // a call that already passed the check, and blocking those mid-call would strand a
+      // conversation halfway. A blocked member can still be called and can still answer.
+      if (p && p.type === "offer") {
+        const mod = await prisma.user
+          .findUnique({
+            where: { id: uid },
+            select: { isAdmin: true, blockCalls: true, restrictUntil: true, suspendedUntil: true, disabledAt: true },
+          })
+          .catch(() => null);
+        if (mod && !mod.isAdmin) {
+          const suspended = mod.suspendedUntil && mod.suspendedUntil.getTime() > Date.now();
+          const restricted = mod.blockCalls && (!mod.restrictUntil || mod.restrictUntil.getTime() > Date.now());
+          if (mod.disabledAt || suspended || restricted) {
+            console.log(`[call] offer refused ${uid} -> ${p.to} | blocked by admin`);
+            socket.emit("call:signal", { from: p.to, type: "blocked" });
+            return;
+          }
+        }
+      }
       if (p && p.to) {
         // Diagnostic: on an offer, log whether the callee actually has a live socket. If
         // "targets: 0" the callee isn't connected (root cause of silent missed calls); if

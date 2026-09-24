@@ -4,15 +4,16 @@ import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken } from "@/lib/auth";
 import { notify } from "@/lib/notify";
 import { pushCall } from "@/lib/fcm";
+import { guard } from "@/lib/guard";
 
 const schema = z.object({ peerId: z.string().min(1).max(40) });
 
 // POST /api/call/ring — the caller dialled. Push an "incoming call" alert to the callee so
 // they're notified even if the app is closed (the live ring only reaches an open app).
 export async function POST(req: Request) {
-  const token = bearerFromRequest(req);
-  const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const g = await guard(req, "calls");
+  if ("response" in g) return g.response;
+  const payload = { sub: g.userId };
 
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ error: "invalid_json" }, { status: 400 }); }

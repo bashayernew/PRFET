@@ -5,6 +5,7 @@ import { isReservedRed, NAME_COLORS } from "@/lib/vip";
 import { bearerFromRequest, verifyAccessToken, publicUser, normalizePhone, hashPassword } from "@/lib/auth";
 import { isCountryClosed } from "@/lib/closed";
 import { expireIfLapsed } from "@/lib/premium";
+import { moderationSummary } from "@/lib/moderation";
 
 export async function GET(req: Request) {
   const token = bearerFromRequest(req);
@@ -24,12 +25,21 @@ export async function GET(req: Request) {
     prisma.user.update({ where: { id: found.id }, data: { lastSeenAt: new Date() } }).catch(() => {});
   }
 
+  // A soft-deleted account behaves as if it no longer exists.
+  if (found.disabledAt) {
+    return NextResponse.json({ error: "account_disabled" }, { status: 403 });
+  }
+
   // Country switched off while they were signed in — lock the session out too.
   if (!user.isAdmin && (await isCountryClosed(user.country))) {
     return NextResponse.json({ error: "country_closed" }, { status: 403 });
   }
 
-  return NextResponse.json({ user: publicUser(user) });
+  // A blocked member is deliberately NOT refused here. They need a valid session to see
+  // the screen explaining why they're blocked and how long is left — refusing /me would
+  // just bounce them to the login page with no explanation. Individual features are what
+  // enforce the block; this payload is what lets the app render it.
+  return NextResponse.json({ user: publicUser(user), moderation: moderationSummary(found) });
 }
 
 const patchSchema = z.object({
