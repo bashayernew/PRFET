@@ -122,6 +122,16 @@ export async function joinLiveKit(
             // because getUserMedia happens to satisfy the autoplay policy as a side effect.
             console.warn("[live] remote audio blocked:", e && (e as Error).name);
             onAudioBlocked?.(true);
+            // Retry shortly. The page is often primed a moment later — by AudioUnlock
+            // catching a tap, or by the SDK's own startAudio landing — and without this
+            // the sound stayed off until the listener happened to tap again.
+            let tries = 0;
+            const again = setInterval(() => {
+              tries++;
+              el.play()
+                .then(() => { clearInterval(again); onAudioBlocked?.(false); })
+                .catch(() => { if (tries >= 10) clearInterval(again); });
+            }, 1000);
           });
         }
         room.startAudio().catch(() => {});
