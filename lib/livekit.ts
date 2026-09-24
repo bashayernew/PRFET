@@ -90,17 +90,58 @@ export async function joinLiveKit(
     // audio track to a hidden <audio> element in the page and kick playback (iOS needs the tap
     // that toggleMic already does via startAudio()).
     type RemoteTrack = { kind?: string; attach: () => HTMLMediaElement; detach: () => HTMLMediaElement[] };
+
+    /**
+     * Every audio element we've attached, so a later "enable sound" tap can retry ALL of
+     * them. Retrying only the newest one leaves earlier speakers silent forever.
+     */
+    const audioEls = new Set<HTMLAudioElement>();
+
     const attachAudio = (track: RemoteTrack) => {
       try {
         if (track?.kind !== "audio") return;
-        const el = track.attach();
+        const el = track.attach() as HTMLAudioElement;
         el.setAttribute("data-prfet-audio", "1");
-        (el as HTMLAudioElement).autoplay = true;
+        el.autoplay = true;
+        // Some Android WebView builds refuse playback outright unless the element is
+        // explicitly not muted and is treated as an inline player.
+        el.muted = false;
+        el.setAttribute("playsinline", "true");
         document.body.appendChild(el);
-        const p = (el as HTMLAudioElement).play();
-        if (p) p.catch(() => {});
+        audioEls.add(el);
+
+        const p = el.play();
+        if (p) {
+          p.catch((e) => {
+            // THIS is the real signal, and it used to be swallowed.
+            //
+            // room.canPlaybackAudio reports on LiveKit's own elements. We attach our own,
+            // so the SDK can report "playback is fine" while this element was blocked —
+            // and AudioPlaybackStatusChanged never fires. The listener then hears nothing,
+            // sees no prompt, and the only thing that fixes it is opening their own mic,
+            // because getUserMedia happens to satisfy the autoplay policy as a side effect.
+            console.warn("[live] remote audio blocked:", e && (e as Error).name);
+            onAudioBlocked?.(true);
+          });
+        }
         room.startAudio().catch(() => {});
       } catch { /* ignore */ }
+    };
+
+    /** Retry every attached element. Must be called from a real tap to count as a gesture. */
+    const resumeAudio = async () => {
+      try { await room.startAudio(); } catch { /* already allowed */ }
+      let allOk = true;
+      for (const el of audioEls) {
+        try {
+          el.muted = false;
+          await el.play();
+        } catch (e) {
+          allOk = false;
+          console.warn("[live] resume failed:", e && (e as Error).name);
+        }
+      }
+      onAudioBlocked?.(!allOk);
     };
     const onSub = (track: RemoteTrack) => { attachAudio(track); collect(); };
     const onUnsub = (track: RemoteTrack) => {
@@ -138,6 +179,16 @@ export async function joinLiveKit(
       });
     });
     collect();
+
+    // Report the state we're ACTUALLY in, right after joining.
+    //
+    // AudioPlaybackStatusChanged only fires on a *change*. A listener who joins into a
+    // blocked state never gets that event, so the prompt never appeared and the room was
+    // silent with nothing on screen to explain it. Checked slightly late so the play()
+    // promises above have had a chance to settle.
+    setTimeout(() => {
+      if (!room.canPlaybackAudio) onAudioBlocked?.(true);
+    }, 600);
 
     // Which lens the phone camera is using. Start on the front (selfie) camera.
     let facing: "user" | "environment" = "user";
@@ -205,7 +256,8 @@ export async function joinLiveKit(
           return false;
         }
       },
-      startAudio: async () => { try { await room.startAudio(); } catch { /* already allowed */ } },
+      // Retries every attached element, not just LiveKit's internal state — see resumeAudio.
+      startAudio: resumeAudio,
     };
   } catch {
     return null;

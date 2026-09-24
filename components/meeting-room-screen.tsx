@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mic, MicOff, Hand, PhoneOff, Video, VideoOff, X, MessageSquare, Ban, Crown, Users,
-  Share2, Check, ShieldAlert, MonitorUp, Monitor, Bell, Send, SwitchCamera,
+  Share2, Check, ShieldAlert, MonitorUp, Monitor, Bell, Send, SwitchCamera, Volume2,
 } from "lucide-react";
 import { useI18n, ld } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
@@ -52,6 +52,24 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
   const [note, setNote] = useState<string | null>(null);
   /** True while the browser refuses to play remote audio (mobile needs a tap first). */
   const [audioBlocked, setAudioBlocked] = useState(false);
+
+  /**
+   * Unlock audio on the first tap anywhere in the room.
+   *
+   * Mobile browsers only need *a* gesture, not a specific one — which is why opening the
+   * mic accidentally fixed the sound and made this look like a microphone bug. Listening
+   * for any tap means most people never see the prompt at all; the banner stays as the
+   * fallback for someone who joins and doesn't touch the screen.
+   */
+  useEffect(() => {
+    const unlock = () => { roomRef.current?.startAudio(); };
+    document.addEventListener("pointerdown", unlock, { passive: true });
+    document.addEventListener("touchstart", unlock, { passive: true });
+    return () => {
+      document.removeEventListener("pointerdown", unlock);
+      document.removeEventListener("touchstart", unlock);
+    };
+  }, []);
   const [joinReqs, setJoinReqs] = useState<JoinReq[]>([]);
   const [reqBoxOpen, setReqBoxOpen] = useState(false);
   const [people, setPeople] = useState<P[]>([]);
@@ -867,16 +885,22 @@ export default function MeetingRoomScreen({ id }: { id: string }) {
         </div>
       )}
 
+      {/*
+        Sat at bottom-40 as a small pill, where the room controls could cover it — so people
+        never saw it and concluded the live "had no sound". It's now a full-width banner at
+        the top, which is both visible and out of the controls' way.
+
+        The tap no longer clears the flag by itself: startAudio() reports back through
+        onAudioBlocked whether every track actually resumed. Clearing it optimistically hid
+        the prompt even when playback was still blocked.
+      */}
       {audioBlocked && (
-        <div className="fixed inset-x-0 bottom-40 z-[61] flex justify-center px-6">
+        <div className="fixed inset-x-0 top-0 z-[61] flex justify-center px-4 pt-[calc(env(safe-area-inset-top)+12px)]">
           <button
-            onClick={async () => {
-              // The tap itself is what the browser is waiting for.
-              await roomRef.current?.startAudio();
-              setAudioBlocked(false);
-            }}
-            className="rounded-full bg-brand-600 px-5 py-3 text-[13px] font-extrabold text-white shadow-lg active:scale-95"
+            onClick={() => { roomRef.current?.startAudio(); }}
+            className="flex w-full max-w-[420px] items-center justify-center gap-2 rounded-2xl bg-brand-600 px-5 py-3.5 text-[13.5px] font-extrabold text-white shadow-lg active:scale-95"
           >
+            <Volume2 className="h-4 w-4" />
             {t("meet.enableSound")}
           </button>
         </div>
