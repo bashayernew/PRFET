@@ -159,8 +159,15 @@ export default function AdminUsers() {
                   {(u.name || "•").charAt(0).toUpperCase()}
                 </span>
               )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[14px] font-extrabold text-ink">
+              {/* The name itself opens the member's profile — that's the first thing an
+                  admin reaches for, and having it do nothing read as broken. */}
+              <a
+                href={`/business/${u.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 flex-1"
+              >
+                <p className="truncate text-[14px] font-extrabold text-ink underline-offset-2 hover:underline">
                   {u.name}
                   {u.isOwner && <span className="ms-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] text-white">{t("adm.usrOwner")}</span>}
                   {!u.isOwner && u.isAdmin && <span className="ms-2 rounded-full bg-brand-600 px-2 py-0.5 text-[10px] text-white">{t("adm.usrAdmin")}</span>}
@@ -185,7 +192,7 @@ export default function AdminUsers() {
                     {u.restrictDaysLeft ? ` — ${t("adm.usrDaysLeft").replace("{n}", ld(u.restrictDaysLeft, locale))}` : ""}
                   </p>
                 )}
-              </div>
+              </a>
 
               <button
                 onClick={() => setSheet(u)}

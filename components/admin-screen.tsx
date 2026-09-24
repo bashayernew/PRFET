@@ -14,6 +14,7 @@ import { apiGet, apiPatch, apiPost, apiUpload, apiDelete, getAccessToken } from 
 import { getCountry, COUNTRIES } from "@/lib/countries";
 import { invalidateOpenCountries } from "@/lib/use-open-countries";
 import AdminUsers from "@/components/admin-users";
+import AdminBroadcastNews from "@/components/admin-broadcast-news";
 
 type Settings = {
   adminEmail: string; supportPhone: string; whatsapp: string;
@@ -1846,6 +1847,9 @@ export default function AdminScreen() {
               </button>
               <p className="mt-2 text-[11px] font-medium leading-snug text-muted">{t("adm.bcNote")}</p>
             </div>
+
+            {/* Second channel: its own sender name, plus media and a link. */}
+            <AdminBroadcastNews />
           </>
         )}
 

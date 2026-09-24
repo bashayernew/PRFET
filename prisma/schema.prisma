@@ -71,6 +71,10 @@ model User {
   hideTop        Boolean @default(false) // parental lock: hides the "most viewed" doorway
   bleDiscoverable Boolean @default(false) // discoverable over Bluetooth (native app; privacy switch)
   bleCode        String? @unique // short 8-hex broadcast id (fits a BLE packet); maps back to this user
+  // Marks one of the app's own broadcast identities ("admin", "news"). These are real
+  // accounts, so a broadcast arrives as an ordinary DM the member can open and reply to,
+  // and the displayName can be renamed from the dashboard without a deploy.
+  systemKey      String? @unique
   // admin-granted freebies: a COUNT of free posts the admin gifted (decremented as used)
   freeAdsLeft     Int @default(0)
   freeJobPostLeft Int @default(0)

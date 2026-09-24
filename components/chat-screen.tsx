@@ -755,7 +755,47 @@ function MessageBody({ m, t, opened, consumed, onOpenOnce }: { m: Msg; t: (k: st
     return <SharedPost id={shared[1]} note={note} t={t} />;
   }
 
-  return <p className="text-[14px] leading-relaxed">{m.body}</p>;
+  return <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{linkify(m.body)}</p>;
+}
+
+/**
+ * Turn URLs and in-app paths inside message text into tappable links.
+ *
+ * Broadcasts can carry a link — a member's profile, an ad, or an external site — and
+ * without this it arrived as plain text the reader had to copy by hand.
+ *
+ * In-app paths (`/business/<id>`, `/ad/<id>`, …) are matched as well as full URLs, and
+ * they deliberately open in the same tab: inside the WebView that's in-app navigation,
+ * which is what "takes them to the account in the app" means. External links open in a
+ * new tab so the app isn't replaced by a website.
+ */
+const LINK_PATTERN = "https?:\\/\\/[^\\s<]+|\\/(?:business|ad|job|post|story|meetings|messages)\\/[A-Za-z0-9_-]+";
+// Two instances on purpose: the /g one is needed to split, but a global regex carries
+// lastIndex between .test() calls and would mis-classify later parts. The test copy has
+// no /g, so it is stateless.
+const LINK_SPLIT = new RegExp(`(${LINK_PATTERN})`, "g");
+const LINK_TEST = new RegExp(`^(?:${LINK_PATTERN})$`);
+
+function linkify(text: string): React.ReactNode {
+  if (!text) return text;
+  const parts = text.split(LINK_SPLIT);
+  if (parts.length === 1) return text;
+
+  return parts.map((part, i) => {
+    if (!LINK_TEST.test(part)) return part;
+    const internal = part.startsWith("/");
+    return (
+      <a
+        key={i}
+        href={part}
+        target={internal ? undefined : "_blank"}
+        rel={internal ? undefined : "noopener noreferrer"}
+        className="font-bold underline underline-offset-2"
+      >
+        {part}
+      </a>
+    );
+  });
 }
 
 /** Preview card for a post shared into a chat. */
