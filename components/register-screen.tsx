@@ -305,14 +305,16 @@ export default function RegisterScreen() {
             <button
               type="button"
               onClick={() => { setContactMethod("email"); setTouchedContact(false); }}
-              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "email" ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
+              // The unselected state used bg-slate-100/text-muted, which this inverted theme
+              // renders as dark-on-dark — the option was effectively invisible and read as missing.
+              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "email" ? "bg-brand-600 text-white" : "border border-brand-600/50 bg-brand-600/10 text-ink"}`}
             >
               {t("register.email")}
             </button>
             <button
               type="button"
               onClick={() => { setContactMethod("phone"); setTouchedContact(false); }}
-              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "phone" ? "bg-brand-600 text-white" : "bg-slate-100 text-muted"}`}
+              className={`flex-1 rounded-2xl py-2.5 text-[13px] font-extrabold transition-colors ${contactMethod === "phone" ? "bg-brand-600 text-white" : "border border-brand-600/50 bg-brand-600/10 text-ink"}`}
             >
               {t("register.phone")}
             </button>
