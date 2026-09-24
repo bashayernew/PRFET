@@ -9,6 +9,7 @@ import { useI18n, ld } from "@/lib/i18n";
 import { catIcon } from "@/lib/cat-icons";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, getAccessToken } from "@/lib/api";
+import { useRefreshable } from "@/lib/refresh";
 import { vipStyle } from "@/lib/vip";
 
 type Row = { id: string; name: string; category: string | null; online: boolean; avatarUrl: string | null; followers: number; following: number; isPremium?: boolean; textColor?: string | null };
@@ -38,6 +39,7 @@ export default function FollowingScreen() {
   useEffect(() => {
     if (ready) load();
   }, [ready, load]);
+  useRefreshable(load); // pull down to reload the list
 
   if (!ready) return null;
 

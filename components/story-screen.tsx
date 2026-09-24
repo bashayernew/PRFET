@@ -136,6 +136,7 @@ export default function StoryScreen({ id }: { id: string }) {
 
   return (
     <div
+      data-no-pull-refresh
       dir={dir}
       onClick={handleTap}
       className="relative mx-auto flex h-[100dvh] max-w-[480px] flex-col overflow-hidden bg-gradient-to-br from-brand-600 via-brand-800 to-brand-900"

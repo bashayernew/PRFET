@@ -10,6 +10,7 @@ import { vipStyle } from "@/lib/vip";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiDelete, apiGet, apiPatch, apiPost, getAccessToken } from "@/lib/api";
+import { useRefreshable } from "@/lib/refresh";
 
 type Convo = {
   peerId: string; lastBody: string | null; lastAt: string; lastFromMe: boolean; unread: number;
@@ -55,6 +56,7 @@ export default function MessagesScreen() {
   }, []);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
+  useRefreshable(load); // pull down to reload the conversation list
 
   // my inbox switch, right here in the inbox
   useEffect(() => {

@@ -88,7 +88,7 @@ export default function MediaViewer({
   }, [items.length]);
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black">
+    <div data-no-pull-refresh className="fixed inset-0 z-[60] bg-black">
       <button
         onClick={onClose}
         aria-label="close"

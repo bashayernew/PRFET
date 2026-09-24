@@ -410,7 +410,7 @@ export default function CallOverlay({
    */
   if (status === "no-answer") {
     return (
-      <div className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 px-8 text-white">
+      <div data-no-pull-refresh className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 px-8 text-white">
         <audio ref={audioRef} autoPlay />
         <div className="grid h-24 w-24 place-items-center rounded-full bg-white/15 text-3xl font-extrabold">{peerName.charAt(0)}</div>
         <div className="text-center">
@@ -472,7 +472,7 @@ export default function CallOverlay({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
+    <div data-no-pull-refresh className="fixed inset-0 z-[60] mx-auto flex max-w-[480px] flex-col items-center justify-center gap-6 bg-gradient-to-b from-brand-700 to-brand-900 text-white">
       <audio ref={audioRef} autoPlay />
       {/* Collapse to a bar — the app stays usable while the call continues. */}
       <button

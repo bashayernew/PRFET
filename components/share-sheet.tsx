@@ -110,7 +110,7 @@ export default function ShareSheet({ post, onClose, onToast }: { post: FeedPost;
 
   // z-[70]: above the fullscreen media viewer (z-[60]) — same reason as comments-sheet.
   return (
-    <div dir={dir} className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50" onClick={onClose}>
+    <div data-no-pull-refresh dir={dir} className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50" onClick={onClose}>
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}

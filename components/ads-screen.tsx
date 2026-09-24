@@ -22,6 +22,7 @@ import { COUNTRIES } from "@/lib/countries";
 import BottomNav from "@/components/bottom-nav";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet, apiPost, apiDelete, apiUpload, getAccessToken } from "@/lib/api";
+import { useRefreshable } from "@/lib/refresh";
 import PaymentSheet from "@/components/payment-sheet";
 
 const DURATIONS = [1, 2, 3, 7, 15, 30];
@@ -120,6 +121,7 @@ export default function AdsScreen() {
   useEffect(() => {
     if (ready) load();
   }, [ready, load]);
+  useRefreshable(load); // pull down to reload the ads
 
   if (!ready) return null;
 

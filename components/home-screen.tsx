@@ -34,6 +34,7 @@ import CommentsSheet from "@/components/comments-sheet";
 import ShareSheet from "@/components/share-sheet";
 import { enablePush } from "@/lib/push-client";
 import { registerNativePush } from "@/lib/native-push";
+import { useRefreshable } from "@/lib/refresh";
 
 type Me = { displayName: string; accountType: string; country: string | null; browseCountries: string; shareLocation: boolean; avatarUrl: string | null; isPremium: boolean; isAdmin?: boolean; hideTop?: boolean; social1?: string | null; social2?: string | null; social3?: string | null };
 type StoryUser = { id: string; displayName: string; avatarUrl: string | null; category: string | null };
@@ -59,6 +60,12 @@ export default function HomeScreen() {
   const storyInputRef = useRef<HTMLInputElement>(null);
   const [storyToast, setStoryToast] = useState<string | null>(null);
   const [countryOpen, setCountryOpen] = useState(false);
+
+  // Pull-to-refresh. The feed's data is loaded by several separate effects rather than one
+  // loader, so bumping a counter that each of them depends on re-runs the lot — cheaper and
+  // far less risky than refactoring them into a single fetch.
+  const [refreshKey, setRefreshKey] = useState(0);
+  useRefreshable(() => { setRefreshKey((k) => k + 1); });
 
   async function postStory(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -93,7 +100,7 @@ export default function HomeScreen() {
     load();
     const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
-  }, [ready]);
+  }, [ready, refreshKey]);
 
   // Country-targeted ads mixed into the home feed — everyone in the ad's country sees them
   // (no follow needed). Falls back to worldwide ads if we don't know the viewer's country yet.
@@ -102,7 +109,7 @@ export default function HomeScreen() {
     const country = me?.country || (typeof window !== "undefined" ? localStorage.getItem("herot.country") : "") || "";
     const url = country ? `/api/ads/serve?limit=8&country=${encodeURIComponent(country)}` : "/api/ads/serve?limit=8";
     apiGet<{ ads: FeedAd[] }>(url).then((r) => { if (r.ok && r.data?.ads) setFeedAds(r.data.ads); }).catch(() => {});
-  }, [ready, me?.country]);
+  }, [ready, me?.country, refreshKey]);
 
   useEffect(() => {
     if (!ready) return;
@@ -158,7 +165,7 @@ export default function HomeScreen() {
       window.removeEventListener("focus", onFocus);
       clearInterval(timer);
     };
-  }, [ready]);
+  }, [ready, refreshKey]);
 
   // Publish an image/video post from the Reels row.
 

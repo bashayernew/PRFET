@@ -10,6 +10,7 @@ import { BUSINESSES } from "@/lib/data";
 import { catIcon } from "@/lib/cat-icons";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiGet } from "@/lib/api";
+import { useRefreshable } from "@/lib/refresh";
 
 const RANK_TINT = ["bg-gold-400 text-white", "bg-slate-300 text-white", "bg-amber-700 text-white"];
 
@@ -42,6 +43,7 @@ export default function TopScreen() {
   }, [sample]);
 
   useEffect(() => { if (ready) load(); }, [ready, load]);
+  useRefreshable(load); // pull down to reload the rankings
 
   if (!ready) return null;
 

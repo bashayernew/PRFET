@@ -3,6 +3,7 @@ import { Cairo } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
 import CallHost from "@/components/call-host";
+import PullToRefresh from "@/components/pull-to-refresh";
 
 const cairo = Cairo({
   subsets: ["arabic", "latin"],
@@ -33,6 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={`${cairo.variable} font-[family-name:var(--font-cairo)] antialiased`}>
         <I18nProvider>
           {children}
+          {/* pull down anywhere to refresh — wired screens refetch, the rest reload */}
+          <PullToRefresh />
           {/* rings anywhere in the app, not just inside a chat */}
           <CallHost />
         </I18nProvider>
