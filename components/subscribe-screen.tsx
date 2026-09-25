@@ -46,12 +46,25 @@ export default function SubscribeScreen() {
     });
     // RevenueCat has to know which account is buying, or the webhook can't attribute the
     // purchase to anyone. isNative() is false on the web, where this whole path is skipped.
-    isNative().then((n) => {
-      setNative(n);
-      if (!n) return;
-      apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
-        if (r.ok && r.data?.user?.id) initPurchases(r.data.user.id);
-      });
+    /**
+     * `native` gates the in-app store UI, so it must mean "purchases actually work here",
+     * not merely "we are inside the app".
+     *
+     * isNative() only checks for @capacitor/core. The RevenueCat plugin is a separate
+     * dependency and is currently NOT bundled in the Android build — Google requires Play
+     * Billing Library 8, and no Capacitor 6 release of the plugin ships it (v11 is the
+     * first, and needs Capacitor 7). It is also inert without a RevenueCat API key.
+     *
+     * Keying this off isNative() alone meant the app showed Buy buttons that could only
+     * fail. initPurchases() returns false when the plugin is missing OR the key is unset,
+     * which is exactly the condition for hiding them.
+     */
+    isNative().then(async (n) => {
+      if (!n) { setNative(false); return; }
+      const me = await apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined);
+      const ready = me.ok && me.data?.user?.id ? await initPurchases(me.data.user.id) : false;
+      setNative(ready);
+      if (!ready) return;
       /**
        * Inside the app, show the price the STORE will actually charge.
        *

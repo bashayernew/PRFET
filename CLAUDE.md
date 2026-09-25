@@ -95,7 +95,17 @@ Google/Apple re-review every update. Display name: "PRFET Reviewer".
 ---
 
 ## Google Play (in progress)
-- Native shell = **Capacitor 6**, `appId com.prfet.app`, appName "PRFET", **loads prfet.com** in a
+- ⚠️ **The real package name is `com.herot.app`, NOT `com.prfet.app`.** That is what
+  `android/app/build.gradle` builds (`applicationId`/`namespace`) and what the Play Console
+  listing uses — Play app **PRFET**, app id 4973404540674362003, developer account
+  7452961130802505302 (personal). The package keeps the old name because the project was
+  created when the app was still called Herot; users never see it, and it can never change.
+  (Chrome's auto-translate renders "PRFET" as "PROPHET" on the Play Console — ignore that.)
+  `capacitor.config.ts` still says `appId: "com.prfet.app"`, which is **wrong and dangerous**:
+  it is only read when the native project is generated, so it does nothing today, but
+  regenerating `android/` would flip the id and Play would reject the upload. A package name
+  can never be changed after first submission. Leave `android/app/build.gradle` alone.
+- Native shell = **Capacitor 6**, appName "PRFET", **loads prfet.com** in a
   WebView (so most updates ship via a normal web deploy — no new AAB needed).
 - Android project: **`D:\app\android`** (open THIS in Android Studio, not the old `~/Desktop/app`).
 - Toolchain: **targetSdk/compileSdk 36**, AGP **8.13.2** / Gradle **8.13** (via AGP Upgrade Assistant).
@@ -103,10 +113,18 @@ Google/Apple re-review every update. Display name: "PRFET Reviewer".
   `privacy-screen`, `@revenuecat/purchases-capacitor@9.2.2`.
 - Permissions added in `android/app/src/main/AndroidManifest.xml` (camera, BLE scan/advertise,
   notifications, Play Billing).
-- **Remaining Play steps:** app icon + version → wire RevenueCat purchase flow + hide in-app
-  FastSpring buttons → create **$25 Play Console** account + app → create Golden/VIP **subscription
-  products** → connect RevenueCat → signed **AAB** → internal testing → **12 testers / 14 days** →
-  production. New personal accounts must run the 12-tester/14-day closed test before production.
+- ✅ **PRODUCTION ACCESS GRANTED (2026-09-25).** The 12-tester / 14-day closed test is done and
+  Google has granted production access. Publishing is now: **الاختبار والإصدار (Test and release)
+  → الإنتاج (Production) → إنشاء إصدار جديد (Create new release)** → upload the signed AAB.
+  Production stage still reads **غير نشط (inactive)** until that first production release.
+- ⚠️ **BLOCKER before selling anything in the app:** `NEXT_PUBLIC_REVENUECAT_ANDROID_KEY` in the
+  server `.env` is still the literal placeholder `<paste key>`. In-app purchases cannot work until
+  it holds the real RevenueCat Android SDK key, and because it is `NEXT_PUBLIC_` it is compiled into
+  the bundle — it needs a **full `--build --force-recreate`**, not a restart. Also confirm the
+  Golden/VIP subscription products exist and are **active in Play Console itself** (RevenueCat
+  having them is not enough), and that RevenueCat is pointed at the Play (not Test) store.
+- **Keep the reviewer account alive:** `REVIEW_EMAIL=review@prfet.com` + `REVIEW_OTP=1234`. Google
+  re-reviews every production update and will reject an app it cannot sign into.
 - Full guide: `docs/PUBLISH_TO_GOOGLE_PLAY.md`.
 
 ---
@@ -542,12 +560,59 @@ and falls back to Twilio):
 returns `false` and logs *nothing* when no provider is configured, so silence means it was never
 reached. Check `grep -E '^(KWTSMS_|TWILIO_)' .env` first.
 
+## 🔥 OUTAGE 2026-09-25 — a schema change took the site down, silently
+
+Symptoms, all at once: **VIP members appeared to lose their subscriptions**, the app was
+**very laggy**, and the **dashboard wouldn't open**. Looked like three bugs. Was one.
+
+Cause: `systemKey` (a column with a **unique constraint**) could not be applied by
+`prisma db push` unattended — Prisma refuses and demands `--accept-data-loss`. The push
+aborted. The Dockerfile ended in **`|| true`**, so the app started anyway.
+
+Why that broke everything: `/api/auth/me` calls `prisma.user.findUnique()` with **no
+`select`**, so Prisma asks Postgres for *every* column in the model. One missing column
+fails the whole query → every signed-in request 500s → members read as not-premium, the
+dashboard's queries die, and retries make the app crawl.
+
+**The subscription data was never touched.** `premiumUntil` was intact and in the future
+the entire time; the API simply couldn't read the rows.
+
+Recovery (safe — the column can't hold duplicates because it didn't exist yet, so the
+unique index applies cleanly; avoid `--accept-data-loss` on production):
+```bash
+docker compose exec -T db psql -U herot -d herot -c \
+ 'ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "systemKey" TEXT;'
+docker compose exec -T db psql -U herot -d herot -c \
+ 'CREATE UNIQUE INDEX IF NOT EXISTS "User_systemKey_key" ON "User"("systemKey");'
+docker compose restart app
+docker compose exec -T app npx prisma db push --skip-generate   # must say "already in sync"
+```
+
+**Fixes shipped so the class of bug can't repeat:**
+- **The Dockerfile no longer ends in `|| true`.** A failed migration prints a banner and
+  **exits 1**, so the container refuses to start. Retries 5× first, because Postgres may
+  not be ready yet — that's timing, not a bad migration. A visibly failed deploy is far
+  cheaper than a site that is live and quietly broken.
+- **`GET /api/health`** now exists and runs `prisma.user.count()` — a real query against
+  the real table. A `SELECT 1` check would have reported "healthy" through BOTH outages.
+  Returns 503 with the error when it fails. **Point an uptime monitor at it.**
+
+**Rule for any future schema change:** adding a `@unique` column, making a column
+required, or changing a type cannot be applied by `db push` unattended. Apply it by hand
+with SQL first, then deploy. Check before pushing:
+```bash
+docker compose exec -T app npx prisma db push --skip-generate   # dry run on the live DB
+```
+
 ## 🛡️ HOW TO STOP ALL THIS HAPPENING AGAIN
 
-**1. Know before your client does.** Everything today was found by a user complaining.
-   - External uptime monitor (UptimeRobot/BetterStack, free) on https://prfet.com, 5-min checks.
-   - CloudWatch alarm on disk > 80%. Today's outage was preventable days earlier.
-   - A `/api/health` endpoint that actually checks the DB (not built yet).
+**1. Know before your client does.** EVERY outage so far was found by a user complaining.
+   - `/api/health` is **built now** — it runs a real `prisma.user.count()`, so it fails
+     when the DB is full, unreachable, or schema-mismatched. 200 = fine, 503 = broken.
+   - **Set up the monitor. This is the single highest-value thing left.** UptimeRobot is
+     free: add `https://prfet.com/api/health`, 5-minute interval, alert on non-200, email
+     + WhatsApp. Ten minutes of setup would have caught both outages before the client did.
+   - CloudWatch alarm on disk > 80%.
 
 **2. Stop writing silent failures.** Nearly every bug in these sessions was one of:
 ```js
