@@ -112,6 +112,7 @@ export default function SubscribeScreen() {
         return;
       }
       const me = await apiGet<{ user: { id: string } }>("/api/auth/me", token);
+      setWhy("init-starting");
       const ready = me.ok && me.data?.user?.id ? await initPurchases(me.data.user.id) : false;
       setNative(ready);
       if (!ready) {
@@ -360,7 +361,7 @@ export default function SubscribeScreen() {
             dir="ltr"
             className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
           >
-            BUILD-B5 native={String(native)} {why || "(checking…)"}
+            BUILD-B6 native={String(native)} {why || "(checking…)"}
           </p>
         </div>
       </div>

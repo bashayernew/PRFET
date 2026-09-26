@@ -141,12 +141,28 @@ export async function initPurchases(userId: string | null | undefined): Promise<
     return false;
   }
 
+  /**
+   * Every native call here is raced against a timeout.
+   *
+   * A Capacitor plugin call that never invokes its callback leaves the promise PENDING
+   * forever — not rejected. The awaiting code then simply stops: no error, no catch, no
+   * branch taken. On the subscribe screen that looked identical to "the check never ran",
+   * and it cost most of a night to find. Nothing that blocks the UI may be unbounded.
+   */
+  const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+      ),
+    ]);
+
   try {
     if (!configured) {
-      await p.configure({ apiKey, appUserID: userId || null });
+      await withTimeout(p.configure({ apiKey, appUserID: userId || null }), 8000, "configure");
       configured = true;
     } else if (userId) {
-      await p.logIn({ appUserID: userId });
+      await withTimeout(p.logIn({ appUserID: userId }), 8000, "logIn");
     }
     return true;
   } catch (e) {
