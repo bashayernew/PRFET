@@ -109,10 +109,26 @@ export async function isNative(): Promise<boolean> {
 
 async function plugin(): Promise<PurchasesPlugin | null> {
   if (!(await isNative())) return null;
+  /**
+   * Prefer the plugin the NATIVE SHELL already injected.
+   *
+   * This app loads a remote URL, so the web bundle ships its own copy of @capacitor/core.
+   * When the npm RevenueCat package registers itself through that second copy, the proxy it
+   * creates can post to a bridge instance the native side never answers — so every call sits
+   * PENDING forever rather than failing. That is what made configure() and purchases hang
+   * with no error, on a device where the plugin was correctly installed and registered
+   * (verified in capacitor.plugins.json).
+   *
+   * window.Capacitor.Plugins.Purchases is the proxy the shell itself created, wired to the
+   * bridge that is actually listening. The npm import stays as a fallback for any build
+   * where the global is absent.
+   */
+  const injected = (window as unknown as {
+    Capacitor?: { Plugins?: Record<string, unknown> };
+  }).Capacitor?.Plugins?.Purchases as PurchasesPlugin | undefined;
+  if (injected) { lastError = "using-injected-plugin"; return injected; }
+
   try {
-    // A STATIC specifier, so the bundler code-splits it into a real chunk that exists at
-    // runtime. Reached only after the isNative() check above, so the web bundle never
-    // executes it. Same pattern as lib/native-push.ts.
     const mod = (await withTimeout(
       import("@revenuecat/purchases-capacitor"),
       8000,

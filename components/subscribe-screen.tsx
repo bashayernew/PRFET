@@ -129,7 +129,7 @@ export default function SubscribeScreen() {
       const myId = me?.ok ? me.data?.user?.id : undefined;
       if (myId) {
         initPurchases(myId)
-          .then((ok) => { if (!ok) setWhy(iapLastError() || "init failed"); })
+          .then((ok) => setWhy(ok ? `ready (${iapLastError() || "npm"})` : iapLastError() || "init failed"))
           .catch((e) => setWhy(String((e as Error)?.message || e).slice(0, 120)));
       }
       /**
