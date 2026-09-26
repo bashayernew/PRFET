@@ -604,6 +604,49 @@ with SQL first, then deploy. Check before pushing:
 docker compose exec -T app npx prisma db push --skip-generate   # dry run on the live DB
 ```
 
+## 🔥 THE BIG ONE — 2026-09-26: the app was serving YEAR-OLD HTML, and it explains a lot
+
+**Symptom:** web deploys appeared to do nothing on the phone. The in-app paywall would not
+appear no matter what was fixed server-side. Clearing the app cache, uninstalling,
+reinstalling and a fresh AAB all failed to change anything.
+
+**Cause:** statically prerendered pages were served with
+
+```
+cache-control: s-maxage=31536000        ← ONE YEAR
+x-nextjs-prerender: 1
+x-nextjs-cache: HIT
+```
+
+The Android WebView pinned that HTML document. An HTML document references JS chunks by
+**content hash**, so the device kept requesting the OLD chunk filenames — which still exist
+on the server, so every page loaded perfectly and looked completely normal, just built from
+pre-deploy code. The cached document outlives app-cache clears, reinstalls, and new AABs,
+because it belongs to the WebView's HTTP cache, not the app's storage.
+
+This is fatal for THIS app specifically: the native shell is a WebView pointed at
+prfet.com, so the HTML is not a build artifact — it is the delivery mechanism for every web
+deploy.
+
+**Fix shipped:** `next.config.ts` sets `Cache-Control: no-store, no-cache, must-revalidate,
+max-age=0` on everything EXCEPT `/_next/static`, `/_next/image` and `/uploads/` (hashed or
+immutable, safe to cache forever). `app/subscribe/page.tsx` also has
+`export const dynamic = "force-dynamic"`, because custom headers do not reliably override
+Next's own caching on a prerendered route.
+
+**Verify after any deploy:**
+```bash
+curl -sI https://prfet.com/subscribe | grep -iE 'cache-control|x-nextjs'
+# want: no-store …   and NO "x-nextjs-cache: HIT"
+```
+
+**This probably explains earlier mysteries too** — the "45-hour-old code" of 09-20, and
+several rounds of "deployed but still broken" that were blamed on Docker or on force-recreate.
+Some of those fixes may have been correct all along and simply never reached the device.
+
+⚠️ If a page is ever made static again (no `dynamic` export, no dynamic data), re-check its
+headers. A single prerendered route can silently freeze the app for its users.
+
 ## 🛡️ HOW TO STOP ALL THIS HAPPENING AGAIN
 
 **1. Know before your client does.** EVERY outage so far was found by a user complaining.
