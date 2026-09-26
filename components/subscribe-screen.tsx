@@ -38,6 +38,15 @@ export default function SubscribeScreen() {
   const [native, setNative] = useState(false);
   /** productId -> the store's own localised price string, e.g. "KWD 1.850". */
   const [storePrices, setStorePrices] = useState<Record<string, string>>({});
+  /**
+   * TEMPORARY, 2026-09-26: why the in-app paywall is hidden, rendered on screen.
+   *
+   * Server-side diagnostics kept coming back empty and we could not tell whether the phone
+   * was even running new code. Putting the reason in the UI removes every layer of doubt at
+   * once — if this line is missing, the device has stale JS; if it is present, it says
+   * exactly what failed. Remove once purchases are confirmed working.
+   */
+  const [why, setWhy] = useState<string>("");
   const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
@@ -72,11 +81,11 @@ export default function SubscribeScreen() {
         // Report unconditionally. An earlier version only reported when the user agent
         // "looked like" the app — which silently suppressed the exact case being hunted,
         // because a Capacitor WebView does not always advertise itself in the UA.
-        report(
-          "not-native",
-          `Capacitor=${!!w.Capacitor} isNativePlatform=${!!w.Capacitor?.isNativePlatform} ` +
-          `PrfetNative=${!!w.PrfetNative} ua=${navigator.userAgent.slice(0, 90)}`,
-        );
+        const detail =
+          `cap=${!!w.Capacitor} native=${!!w.Capacitor?.isNativePlatform?.()} ` +
+          `bridge=${!!w.PrfetNative} ua=${navigator.userAgent.slice(0, 60)}`;
+        setWhy(`B1 ${detail}`); // "B1" = build marker, so a stale bundle is obvious
+        report("not-native", detail);
         return;
       }
       const me = await apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined);
@@ -303,6 +312,13 @@ export default function SubscribeScreen() {
             >
               <MessageSquareText className="h-4 w-4" /> {t("premium.contactAdmin")}
             </button>
+          )}
+
+          {/* TEMPORARY diagnostic — see the `why` state above. Remove once purchases work. */}
+          {!!why && (
+            <p dir="ltr" className="mt-3 break-all text-[10px] font-mono leading-tight text-muted/70">
+              {why}
+            </p>
           )}
         </div>
       </div>
