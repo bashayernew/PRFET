@@ -68,6 +68,8 @@ const patchSchema = z.object({
   // premium-gated
   textColor: z.string().max(20).nullable().optional(), // red is rejected below — it is the app's alert colour
   shareLocation: z.boolean().optional(),
+  // "everyone" (minus the hide-list) or "chosen" (allow-list only). See /api/users/[id].
+  locationMode: z.enum(["everyone", "chosen"]).optional(),
   locationLat: z.number().nullable().optional(),
   locationLng: z.number().nullable().optional(),
   social1: z.string().max(200).nullable().optional(),

@@ -35,6 +35,7 @@ type Me = {
   isAdmin?: boolean;
   textColor: string | null;
   shareLocation: boolean;
+  locationMode: string;   // "everyone" | "chosen"
   locationLat: number | null;
   locationLng: number | null;
   social1: string | null;
@@ -191,7 +192,30 @@ export default function SettingsScreen() {
               <Segmented options={[{ value: "public", label: t("register.public") }, { value: "friends", label: t("register.friends") }]} value={me?.visibility || "public"} onChange={(v) => patch({ visibility: v })} />
             </div>
           )}
-          {/* precise-location control lives on the profile + home page, not here (per client) */}
+          {/*
+            Turning precise location ON/OFF lives on the profile + home page (per client).
+            WHO can see it belongs here, with the other privacy choices.
+
+            "chosen" fails closed — nobody sees the location until the member picks people
+            from a profile — which is the right default for a live location, even though it
+            means the setting appears to do nothing until they choose someone.
+          */}
+          <div className="px-1 pb-1 pt-1">
+            <p className="mb-1.5 flex items-center gap-1.5 text-[12.5px] font-bold text-ink">
+              <MapPin className="h-4 w-4 text-brand-600" /> {t("loc.who")}
+            </p>
+            <Segmented
+              options={[
+                { value: "everyone", label: t("loc.everyone") },
+                { value: "chosen", label: t("loc.chosen") },
+              ]}
+              value={me?.locationMode || "everyone"}
+              onChange={(v) => patch({ locationMode: v })}
+            />
+            <p className="mt-1.5 px-0.5 text-[11px] font-medium leading-snug text-muted">
+              {me?.locationMode === "chosen" ? t("loc.chosenHint") : t("loc.everyoneHint")}
+            </p>
+          </div>
           <Toggle icon={<Ruler className="h-4 w-4" />} label={t("register.distance")} hint={t("register.distanceHint")} value={!!me?.showDistance} onChange={(v) => patch({ showDistance: v })} />
           <Toggle icon={<Bluetooth className="h-4 w-4" />} label={t("ble.discoverable")} hint={t("ble.discoverableHint")} value={!!me?.bleDiscoverable} onChange={(v) => patch({ bleDiscoverable: v })} />
           <Toggle icon={<ImageDown className="h-4 w-4" />} label={t("register.media")} hint={t("register.mediaHint")} value={!!me?.allowSaveMedia} onChange={(v) => patch({ allowSaveMedia: v })} />

@@ -52,6 +52,9 @@ const DEFAULTS = {
   callMinutesVip: 480,
   vaultEnabled: true,
   walletEnabled: true,
+  // Wallet ceiling in CENTS (100000 = $1,000) and per-country overrides "KW:200000,SA:150000".
+  walletCapCents: 100000,
+  walletCapByCountry: "",
   priceAddonVoice: 1.99,
   priceAddonMedia: 1.99,
   priceAddonStorage: 1.99,
@@ -122,6 +125,10 @@ const patchSchema = z.object({
   callMinutesVip: z.number().int().min(0).max(10000000).optional(),
   vaultEnabled: z.boolean().optional(),
   walletEnabled: z.boolean().optional(),
+  // Cents, so $1,000 is 100000. Capped at $100,000 to stop a typo creating an unbounded
+  // stored-value balance, which is the sort of thing payment regulators care about.
+  walletCapCents: z.number().int().min(0).max(10000000).optional(),
+  walletCapByCountry: z.string().max(2000).optional(),
   priceAddonVoice: z.number().min(0).max(100000).optional(),
   priceAddonMedia: z.number().min(0).max(100000).optional(),
   priceAddonStorage: z.number().min(0).max(100000).optional(),

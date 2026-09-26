@@ -41,6 +41,40 @@ export function toDollars(cents: number): number {
   return Math.round(cents) / CENTS;
 }
 
+/**
+ * The wallet ceiling for ONE member, resolved from the dashboard.
+ *
+ * Precedence, most specific first:
+ *   1. `User.walletCapCents`              — an override for this member
+ *   2. `AppSettings.walletCapByCountry`   — "KW:200000,SA:150000"
+ *   3. `AppSettings.walletCapCents`       — the global default
+ *   4. MAX_BALANCE_CENTS                  — code fallback if settings are missing
+ *
+ * This used to be the hardcoded MAX_BALANCE_CENTS, which meant raising the limit for one
+ * business account, or for a single country, required a code change and a full redeploy.
+ */
+export async function walletCapCents(userId: string): Promise<number> {
+  const [u, s] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { walletCapCents: true, country: true } }).catch(() => null),
+    prisma.appSettings.findUnique({ where: { id: "app" }, select: { walletCapCents: true, walletCapByCountry: true } }).catch(() => null),
+  ]);
+
+  if (u?.walletCapCents && u.walletCapCents > 0) return u.walletCapCents;
+
+  const country = (u?.country || "").toUpperCase();
+  if (country && s?.walletCapByCountry) {
+    for (const pair of s.walletCapByCountry.split(",")) {
+      const [cc, cents] = pair.split(":").map((x: string) => x.trim());
+      if (cc?.toUpperCase() === country) {
+        const n = Number(cents);
+        if (Number.isFinite(n) && n > 0) return Math.round(n);
+      }
+    }
+  }
+
+  return s?.walletCapCents && s.walletCapCents > 0 ? s.walletCapCents : MAX_BALANCE_CENTS;
+}
+
 export async function balance(userId: string): Promise<number> {
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { creditCents: true } }).catch(() => null);
   return u?.creditCents ?? 0;
@@ -51,7 +85,8 @@ export async function balance(userId: string): Promise<number> {
 export async function addCredits(userId: string, cents: number): Promise<number> {
   if (!Number.isFinite(cents) || cents <= 0) return balance(userId);
   const have = await balance(userId);
-  const room = Math.max(0, MAX_BALANCE_CENTS - have);
+  const cap = await walletCapCents(userId);
+  const room = Math.max(0, cap - have);
   const add = Math.min(Math.round(cents), room);
 
   // Truncation means the member paid for credit they did not receive. It must never happen
@@ -60,7 +95,7 @@ export async function addCredits(userId: string, cents: number): Promise<number>
   if (add < Math.round(cents)) {
     console.error(
       `[credits] TOP-UP TRUNCATED for ${userId}: paid ${cents}c, credited ${add}c ` +
-      `(balance ${have}c, cap ${MAX_BALANCE_CENTS}c). The member is owed ${Math.round(cents) - add}c.`,
+      `(balance ${have}c, cap ${cap}c). The member is owed ${Math.round(cents) - add}c.`,
     );
   }
   if (add <= 0) return have; // already at the cap
@@ -124,7 +159,8 @@ export async function transferCredits(fromId: string, toId: string, cents: numbe
     const to = await tx.user.findUnique({ where: { id: toId }, select: { creditCents: true } });
     if (!to) return { ok: false, reason: "invalid" } as const;
 
-    if (MAX_BALANCE_CENTS - to.creditCents < need) return { ok: false, reason: "recipient_full" } as const;
+    const toCap = await walletCapCents(to.id);
+    if (toCap - to.creditCents < need) return { ok: false, reason: "recipient_full" } as const;
 
     // Same atomic guard as spendCredits: the WHERE clause decides, so two transfers racing
     // on one account can't both pass and overdraw it.

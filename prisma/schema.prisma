@@ -83,6 +83,10 @@ model User {
   // per-country + per-day), so inside the native apps members top up at fixed App Store
   // price points and the dashboard price is spent from this balance. Web is unaffected.
   creditCents     Int @default(0)
+  // Per-member wallet ceiling, in cents. null = fall back to the country rule, then the
+  // global setting (see walletCapCents in lib/credits.ts). Set from the dashboard when one
+  // account legitimately needs to hold more than everyone else.
+  walletCapCents  Int?
   // subscription auto-renewal: on by default, cancelling turns it off (premium
   // then runs to its end date and lapses). renewMonths = which bundle to rebill.
   autoRenew        Boolean @default(true)
@@ -156,6 +160,14 @@ model User {
   commentLikes  CommentLike[]
   storyLikes    StoryLike[]
   locationHides LocationHide[] @relation("LocationHides")
+  locationAllows LocationAllow[] @relation("LocationAllows")
+  /**
+   * Who may see my precise location while shareLocation is on.
+   *   "everyone" — anyone (minus the per-person LocationHide blocklist)
+   *   "chosen"   — ONLY people in LocationAllow
+   * Defaults to "everyone" so existing accounts behave exactly as before.
+   */
+  locationMode  String @default("everyone")
   dmAllows      DmAllow[]      @relation("DmAllows")
   joinRequests  MeetingJoinRequest[]
   postedJobs    Job[]
@@ -617,6 +629,22 @@ model LocationHide {
   @@index([targetId])
 }
 
+/**
+ * The inverse of LocationHide: an explicit allow-list, used when locationMode = "chosen".
+ * Wanted by the client — "open it privately, or to one specific person" — because hiding
+ * from everyone one at a time is unusable once you have more than a handful of contacts.
+ */
+model LocationAllow {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("LocationAllows", fields: [userId], references: [id], onDelete: Cascade)
+  targetId  String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, targetId])
+  @@index([targetId])
+}
+
 model PushSubscription {
   id        String   @id @default(cuid())
   userId    String
@@ -716,6 +744,14 @@ model AppSettings {
   /// Buyable add-on pack prices (USD), editable from the dashboard.
   /// voice = +120 AI-voice min (1 mo); media = +5 images/+2 videos/+200 messages (1 mo);
   /// storage = +25 GB (3 mo). What each pack grants lives in code (lib/ai-usage.ts).
+  // Wallet ceiling, in CENTS, for everyone without a per-member or per-country override.
+  // 100000 = $1,000. Must always be at least twice the largest top-up pack on sale, or a
+  // buyer can pay for credit that is silently truncated (see addCredits).
+  walletCapCents    Int   @default(100000)
+  // Per-country overrides as "CC:cents" pairs, e.g. "KW:200000,SA:150000". A country not
+  // listed uses walletCapCents. Kept as a string so the dashboard can edit it without a
+  // schema change every time a country is added.
+  walletCapByCountry String @default("")
   priceAddonVoice   Float @default(1.99)
   priceAddonMedia   Float @default(1.99)
   priceAddonStorage Float @default(1.99)

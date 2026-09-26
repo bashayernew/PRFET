@@ -115,6 +115,15 @@ export default function MerchantScreen({ id, sponsor = false }: { id: string; sp
   const [menuOpen, setMenuOpen] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
   const [locHidden, setLocHidden] = useState(false);
+  /**
+   * My own location mode, because the same toggle below means different things:
+   *   "everyone" → the toggle writes the HIDE list (off = hidden from this person)
+   *   "chosen"   → the toggle writes the ALLOW list (on = this person may see it)
+   * To the member it reads identically — "can this person see my location" — which is the
+   * point; the storage difference is ours, not theirs.
+   */
+  const [myLocMode, setMyLocMode] = useState<"everyone" | "chosen">("everyone");
+  const [locAllowed, setLocAllowed] = useState(false);
   const [dmAllowed, setDmAllowed] = useState(false); // do I let THIS person message me?
   const [myDmClosed, setMyDmClosed] = useState(false);
   const b = useMemo(() => buildView(id, real, sample), [id, real, sample]);
@@ -150,11 +159,17 @@ export default function MerchantScreen({ id, sponsor = false }: { id: string; sp
       apiGet<{ allowed: boolean }>(`/api/dm-allow/${id}`, token).then((res) => {
         if (res.ok && res.data) setDmAllowed(res.data.allowed);
       });
-      apiGet<{ user: { dmClosed: boolean } }>("/api/auth/me", token).then((res) => {
-        if (res.ok && res.data?.user) setMyDmClosed(res.data.user.dmClosed);
+      apiGet<{ user: { dmClosed: boolean; locationMode?: string } }>("/api/auth/me", token).then((res) => {
+        if (res.ok && res.data?.user) {
+          setMyDmClosed(res.data.user.dmClosed);
+          setMyLocMode(res.data.user.locationMode === "chosen" ? "chosen" : "everyone");
+        }
       });
       apiGet<{ hidden: boolean }>(`/api/location-hide/${id}`, token).then((res) => {
         if (res.ok && res.data) setLocHidden(res.data.hidden);
+      });
+      apiGet<{ allowed: boolean }>(`/api/location-allow/${id}`, token).then((res) => {
+        if (res.ok && res.data) setLocAllowed(res.data.allowed);
       });
     }
   }, [id]);
@@ -188,12 +203,21 @@ export default function MerchantScreen({ id, sponsor = false }: { id: string; sp
     else await apiDelete(`/api/dm-allow/${id}`, token);
   }
 
+  /** True when this person can currently see my location, whichever mode I'm in. */
+  const locShared = myLocMode === "chosen" ? locAllowed : !locHidden;
+
   async function toggleLocShare() {
     const token = getAccessToken() || undefined;
-    const nextHidden = !locHidden;
-    setLocHidden(nextHidden);
-    if (nextHidden) await apiPost(`/api/location-hide/${id}`, {}, token);
-    else await apiDelete(`/api/location-hide/${id}`, token);
+    const next = !locShared;
+    if (myLocMode === "chosen") {
+      setLocAllowed(next);
+      if (next) await apiPost(`/api/location-allow/${id}`, {}, token);
+      else await apiDelete(`/api/location-allow/${id}`, token);
+    } else {
+      setLocHidden(!next);
+      if (next) await apiDelete(`/api/location-hide/${id}`, token);
+      else await apiPost(`/api/location-hide/${id}`, {}, token);
+    }
   }
   async function shareProfile() {
     const url = `${window.location.origin}/business/${id}`;
@@ -398,8 +422,8 @@ export default function MerchantScreen({ id, sponsor = false }: { id: string; sp
             <button onClick={toggleLocShare} className="flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-start text-[13.5px] font-bold text-ink active:bg-slate-50">
               <MapPin className="h-4 w-4 text-brand-600" />
               <span className="flex-1">{t("merchant.shareLocWith")}</span>
-              <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${!locHidden ? "bg-brand-500" : "bg-slate-300"}`}>
-                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${!locHidden ? "start-[22px]" : "start-0.5"}`} />
+              <span className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${locShared ? "bg-brand-500" : "bg-slate-300"}`}>
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${locShared ? "start-[22px]" : "start-0.5"}`} />
               </span>
             </button>
             <button onClick={doReport} className="flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-start text-[13.5px] font-bold text-amber-600 active:bg-amber-50">

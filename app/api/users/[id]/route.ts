@@ -23,10 +23,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const appSettings = await prisma.appSettings.findUnique({ where: { id: "app" }, select: { sponsorUserId: true } });
   const isSponsor = !!appSettings?.sponsorUserId && appSettings.sponsorUserId === id;
 
-  // Visibility enforcement: public = anyone; friends = owner or a follower only.
+  /**
+   * Visibility: `public` = anyone. `friends` = only people the OWNER follows.
+   *
+   * This used to check the opposite direction — whether the VIEWER followed the owner —
+   * which meant anyone could see a "private" profile simply by following it. The client
+   * asked for "إقفالها فقط لمن أتابعهم": closed except to the people I follow. That is a
+   * choice the owner makes, so it must be the owner's follow list that decides, not a
+   * list strangers can add themselves to.
+   */
   if (u.visibility !== "public" && viewer !== id) {
-    const isFollower = viewer ? await prisma.follow.findFirst({ where: { userId: viewer, targetId: id } }) : null;
-    if (!isFollower) return NextResponse.json({ error: "not_found" }, { status: 404 });
+    const ownerFollowsViewer = viewer
+      ? await prisma.follow.findFirst({ where: { userId: id, targetId: viewer } })
+      : null;
+    if (!ownerFollowsViewer) return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
   /**
@@ -89,11 +99,30 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   // A cancelled subscription that has run out counts as free everywhere it's read.
   const effPremium = u.isPremium && !premiumLapsed(u);
 
-  // per-person location privacy check
+  /**
+   * Location privacy, in two modes.
+   *
+   *   "everyone" — visible to all, minus anyone on the LocationHide blocklist
+   *   "chosen"   — visible ONLY to people on the LocationAllow list
+   *
+   * "chosen" fails closed: an unauthenticated viewer, or anyone not on the list, gets no
+   * coordinates. That is the whole point of the mode, and getting the default backwards
+   * would leak a live location rather than merely annoy someone.
+   */
   let coordsVisible = effPremium && u.shareLocation;
-  if (coordsVisible && viewer && viewer !== id) {
-    const hidden = await prisma.locationHide.findUnique({ where: { userId_targetId: { userId: id, targetId: viewer } } }).catch(() => null);
-    if (hidden) coordsVisible = false;
+  if (coordsVisible && viewer !== id) {
+    if (u.locationMode === "chosen") {
+      const allowed = viewer
+        ? await prisma.locationAllow.findUnique({ where: { userId_targetId: { userId: id, targetId: viewer } } }).catch(() => null)
+        : null;
+      if (!allowed) coordsVisible = false;
+    } else if (viewer) {
+      const hidden = await prisma.locationHide.findUnique({ where: { userId_targetId: { userId: id, targetId: viewer } } }).catch(() => null);
+      if (hidden) coordsVisible = false;
+    } else {
+      // No viewer at all: nothing to check against the blocklist, so leave it visible —
+      // that matches the existing "everyone" behaviour for signed-out requests.
+    }
   }
   return NextResponse.json({
     user: {

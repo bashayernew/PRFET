@@ -35,6 +35,8 @@ type Settings = {
   callMinutesBasic: number; callMinutesVip: number; // monthly AI-voice caps in minutes (0 = unlimited)
   vaultEnabled: boolean; // the personal vault feature
   walletEnabled: boolean; // the credit wallet feature
+  walletCapCents: number;      // wallet ceiling in CENTS (100000 = $1,000)
+  walletCapByCountry: string;  // "KW:200000,SA:150000" — blank means use the global cap
   priceAddonVoice: number; priceAddonMedia: number; priceAddonStorage: number; // add-on pack prices (USD)
   aiEnabled: boolean; aiPremiumOnly: boolean; // assistant on/off, and paid-only
 };
@@ -58,6 +60,8 @@ const EMPTY: Settings = {
   callMinutesBasic: 2000, callMinutesVip: 480,
   vaultEnabled: true,
   walletEnabled: true,
+  walletCapCents: 100000,
+  walletCapByCountry: "",
   priceAddonVoice: 1.99, priceAddonMedia: 1.99, priceAddonStorage: 1.99,
   aiEnabled: true, aiPremiumOnly: true,
 };
@@ -1903,6 +1907,25 @@ export default function AdminScreen() {
                   <div className="mt-2">
                     <FeatureRow label={t("admin.featVault")} on={s.vaultEnabled} onToggle={(v) => toggleFeature("vaultEnabled", v)} />
                     <FeatureRow label={t("admin.featWallet")} on={s.walletEnabled} onToggle={(v) => toggleFeature("walletEnabled", v)} />
+                  </div>
+                  {/* Wallet ceiling — was hardcoded in lib/credits.ts, so raising it for one
+                      business account or one country used to need a code change + redeploy. */}
+                  <div className="mt-3 border-t-2 border-slate-100 pt-3">
+                    <p className="mb-2 text-[12.5px] font-extrabold text-ink">{t("admin.walletCapTitle")}</p>
+                    <PriceField
+                      label={t("admin.walletCap")}
+                      value={(s.walletCapCents ?? 100000) / 100}
+                      onChange={(v) => set("walletCapCents", Math.round(v * 100))}
+                    />
+                    <label className="mt-2 block text-[12px] font-extrabold text-ink">{t("admin.walletCapByCountry")}</label>
+                    <input
+                      dir="ltr"
+                      value={s.walletCapByCountry ?? ""}
+                      onChange={(e) => set("walletCapByCountry", e.target.value)}
+                      placeholder="KW:200000,SA:150000"
+                      className="mt-1 h-11 w-full rounded-2xl border-2 border-slate-200 px-3.5 text-[13px] font-medium text-ink outline-none focus:border-brand-500"
+                    />
+                    <p className="mt-1 text-[11px] font-medium leading-snug text-muted">{t("admin.walletCapHint")}</p>
                   </div>
                   {/* Buyable add-on packs — prices only; what each grants is fixed */}
                   <div className="mt-3 border-t-2 border-slate-100 pt-3">

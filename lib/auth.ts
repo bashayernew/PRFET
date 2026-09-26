@@ -115,6 +115,7 @@ export function publicUser(u: {
   promoLinkUrl: string | null;
   textColor: string | null;
   shareLocation: boolean;
+  locationMode: string;
   locationLat: number | null;
   locationLng: number | null;
   social1: string | null;
@@ -161,6 +162,7 @@ export function publicUser(u: {
     promoLinkUrl: u.promoLinkUrl,
     textColor: u.textColor,
     shareLocation: u.shareLocation,
+    locationMode: u.locationMode ?? "everyone",
     locationLat: u.locationLat,
     locationLng: u.locationLng,
     social1: u.social1,
