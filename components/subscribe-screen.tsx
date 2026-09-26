@@ -229,11 +229,26 @@ export default function SubscribeScreen() {
     if (native) {
       if (buying) return;
       setBuying(true);
-      const res = await buy(tier === "vip" ? SUB_PRODUCTS.vip1m : SUB_PRODUCTS.basic1m, getAccessToken() || "");
-      setBuying(false);
-      if (res.cancelled) return; // user backed out of the store sheet — not an error
-      setToast(res.ok ? t("premium.paidThanks") : t("common.error"));
-      setTimeout(() => setToast(null), 3500);
+      /**
+       * `buying` disables the button, so it MUST be cleared no matter what happens —
+       * including a native call that never returns. It previously sat in the middle of the
+       * happy path, so a hang left the button permanently greyed out and the screen looked
+       * dead. try/finally guarantees it; the race guarantees `finally` is reached.
+       */
+      try {
+        const res = await Promise.race([
+          buy(tier === "vip" ? SUB_PRODUCTS.vip1m : SUB_PRODUCTS.basic1m, getAccessToken() || ""),
+          new Promise<{ ok: false; error: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, error: "store_timeout" }), 20000),
+          ),
+        ]);
+        if ("cancelled" in res && res.cancelled) return; // backed out of the sheet — not an error
+        if (!res.ok) setWhy(res.error || "purchase failed");
+        setToast(res.ok ? t("premium.paidThanks") : t("common.error"));
+        setTimeout(() => setToast(null), 3500);
+      } finally {
+        setBuying(false);
+      }
       return;
     }
     if (fastspringEnabled) { checkout(tier === "vip" ? FS_PATHS.vip : FS_PATHS.golden, uid); return; }
@@ -244,8 +259,12 @@ export default function SubscribeScreen() {
   async function restorePurchases() {
     if (buying) return;
     setBuying(true);
-    const ok = await restore(getAccessToken() || "");
-    setBuying(false);
+    let ok = false;
+    try {
+      ok = await restore(getAccessToken() || "");
+    } finally {
+      setBuying(false);
+    }
     setToast(ok ? t("wallet.restored") : t("common.error"));
     setTimeout(() => setToast(null), 2600);
   }

@@ -7,11 +7,25 @@ import PullToRefresh from "@/components/pull-to-refresh";
 import BlockedGate from "@/components/blocked-gate";
 import AudioUnlock from "@/components/audio-unlock";
 
+/**
+ * next/font downloads Cairo from Google's servers during `npm run build`.
+ *
+ * On 2026-09-26 that request failed and the whole deploy died with
+ * `TypeError: Cannot read properties of null` inside @next/font's loader — nothing to do
+ * with our code. A production deploy that can only succeed while fonts.googleapis.com is
+ * reachable is a fragile thing to have in the release path.
+ *
+ * `adjustFontFallback` and an explicit `fallback` stack mean the page still renders
+ * correctly in a system Arabic font if the download is ever unavailable, rather than
+ * shipping a broken layout.
+ */
 const cairo = Cairo({
   subsets: ["arabic", "latin"],
   weight: ["400", "500", "600", "700", "800"],
   variable: "--font-cairo",
   display: "swap",
+  fallback: ["Segoe UI", "Tahoma", "Arial", "sans-serif"],
+  adjustFontFallback: false,
 });
 
 export const metadata: Metadata = {
