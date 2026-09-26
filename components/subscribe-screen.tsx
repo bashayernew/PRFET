@@ -361,7 +361,7 @@ export default function SubscribeScreen() {
             dir="ltr"
             className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
           >
-            BUILD-B6 native={String(native)} {why || "(checking…)"}
+            BUILD-B7 native={String(native)} {why || "(checking…)"}
           </p>
         </div>
       </div>

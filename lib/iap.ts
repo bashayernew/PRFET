@@ -35,6 +35,25 @@ export type RcProduct = {
 export type RcPackage = { identifier: string; product: RcProduct };
 export type RcOffering = { identifier: string; availablePackages: RcPackage[] };
 
+/**
+ * Race any promise against a timeout.
+ *
+ * A Capacitor plugin call — or a dynamic import of its chunk — that never settles leaves
+ * the promise PENDING rather than rejected. The awaiting code then just stops: no error,
+ * no catch, no branch taken, nothing in any log. That is what stalled the subscribe screen
+ * and it cost most of a night, because every diagnostic added was AFTER the stall.
+ *
+ * Rule for this file: nothing that blocks the UI is ever awaited unbounded.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 let configured = false;
 
 /**
@@ -94,13 +113,18 @@ async function plugin(): Promise<PurchasesPlugin | null> {
     // A STATIC specifier, so the bundler code-splits it into a real chunk that exists at
     // runtime. Reached only after the isNative() check above, so the web bundle never
     // executes it. Same pattern as lib/native-push.ts.
-    const mod = (await import("@revenuecat/purchases-capacitor")) as unknown as {
+    const mod = (await withTimeout(
+      import("@revenuecat/purchases-capacitor"),
+      8000,
+      "plugin-import",
+    )) as unknown as {
       Purchases?: PurchasesPlugin;
       default?: PurchasesPlugin;
     };
     return mod.Purchases ?? mod.default ?? null;
   } catch (e) {
     // Never silent: without this the paywall just disappears and there is nothing to debug.
+    lastError = `plugin-import: ${String((e as Error)?.message || e).slice(0, 140)}`;
     console.warn("[iap] RevenueCat plugin unavailable:", e);
     return null;
   }
@@ -140,22 +164,6 @@ export async function initPurchases(userId: string | null | undefined): Promise<
     report("no-key", lastError);
     return false;
   }
-
-  /**
-   * Every native call here is raced against a timeout.
-   *
-   * A Capacitor plugin call that never invokes its callback leaves the promise PENDING
-   * forever — not rejected. The awaiting code then simply stops: no error, no catch, no
-   * branch taken. On the subscribe screen that looked identical to "the check never ran",
-   * and it cost most of a night to find. Nothing that blocks the UI may be unbounded.
-   */
-  const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
-    Promise.race([
-      promise,
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
-      ),
-    ]);
 
   try {
     if (!configured) {
