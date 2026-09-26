@@ -50,6 +50,12 @@ export default function SubscribeScreen() {
   const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
+    // FIRST line of the effect, before anything that can throw. If the on-screen marker
+    // still says "(checking…)" with this present, the effect never ran at all — meaning
+    // React is not hydrating and the page is inert server HTML. That would explain every
+    // symptom tonight far better than any payment bug.
+    setWhy("effect-ran");
+
     /**
      * getAccessToken() reads localStorage, which THROWS in a WebView when storage is
      * restricted. A synchronous throw here killed the rest of the effect — including the
@@ -354,7 +360,7 @@ export default function SubscribeScreen() {
             dir="ltr"
             className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
           >
-            BUILD-B4 native={String(native)} {why || "(checking…)"}
+            BUILD-B5 native={String(native)} {why || "(checking…)"}
           </p>
         </div>
       </div>
