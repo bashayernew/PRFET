@@ -314,12 +314,20 @@ export default function SubscribeScreen() {
             </button>
           )}
 
-          {/* TEMPORARY diagnostic — see the `why` state above. Remove once purchases work. */}
-          {!!why && (
-            <p dir="ltr" className="mt-3 break-all text-[10px] font-mono leading-tight text-muted/70">
-              {why}
-            </p>
-          )}
+          {/*
+            TEMPORARY diagnostic (2026-09-26). Deliberately loud and ALWAYS rendered.
+
+            The first version was 10px muted grey at the bottom of a dark card — invisible in
+            practice, which made "nothing showed" ambiguous between "no new code" and "I
+            can't see it". Rendering unconditionally in red means its ABSENCE is now proof
+            that the device is running stale JavaScript, which is the thing we need to know.
+          */}
+          <p
+            dir="ltr"
+            className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
+          >
+            BUILD-B2 native={String(native)} {why || "(checking…)"}
+          </p>
         </div>
       </div>
 
