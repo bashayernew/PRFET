@@ -1,4 +1,4 @@
-import { apiPost } from "@/lib/api";
+import { apiPost, getAccessToken } from "@/lib/api";
 import { ALL_SUB_PRODUCT_IDS } from "@/lib/iap-products";
 
 /**
@@ -36,6 +36,22 @@ export type RcPackage = { identifier: string; product: RcProduct };
 export type RcOffering = { identifier: string; availablePackages: RcPackage[] };
 
 let configured = false;
+
+/**
+ * Tell the server why purchases are unavailable.
+ *
+ * The paywall hides itself when it can't sell anything, which is right for members and
+ * terrible for debugging: the reason lives in a WebView console on a phone that may be in
+ * another country. This reuses the /api/call/diag reporter — it stores nothing, it just
+ * prints to `docker compose logs app` so the cause is visible from the server.
+ */
+async function report(stage: string, detail: string): Promise<void> {
+  try {
+    await apiPost("/api/call/diag", { stage: `iap:${stage}`, detail }, getAccessToken() || undefined);
+  } catch {
+    // Diagnostics must never break the screen they are diagnosing.
+  }
+}
 
 /**
  * True only inside the Capacitor native shell.
@@ -88,7 +104,12 @@ async function plugin(): Promise<PurchasesPlugin | null> {
 export async function initPurchases(userId: string | null | undefined): Promise<boolean> {
   const p = await plugin();
   if (!p) {
-    console.warn("[iap] no plugin — not in the native app, or the SDK is missing from this build");
+    const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+    const why = !cap ? "window.Capacitor missing (not the native shell)"
+      : !cap.isNativePlatform?.() ? "isNativePlatform() false"
+      : "plugin import failed (SDK not in this build)";
+    console.warn("[iap] no plugin:", why);
+    report("no-plugin", why);
     return false;
   }
 
