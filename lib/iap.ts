@@ -38,6 +38,18 @@ export type RcOffering = { identifier: string; availablePackages: RcPackage[] };
 let configured = false;
 
 /**
+ * Why purchases are unavailable, for the UI to show.
+ *
+ * initPurchases() returns a bare boolean, so every distinct failure — missing plugin,
+ * missing key, RevenueCat rejecting configure() — collapsed into the same "false" and the
+ * paywall vanished with no way to tell them apart. This keeps the last reason.
+ */
+let lastError = "";
+export function iapLastError(): string {
+  return lastError;
+}
+
+/**
  * Tell the server why purchases are unavailable.
  *
  * The paywall hides itself when it can't sell anything, which is right for members and
@@ -108,6 +120,7 @@ export async function initPurchases(userId: string | null | undefined): Promise<
     const why = !cap ? "window.Capacitor missing (not the native shell)"
       : !cap.isNativePlatform?.() ? "isNativePlatform() false"
       : "plugin import failed (SDK not in this build)";
+    lastError = `no-plugin: ${why}`;
     console.warn("[iap] no plugin:", why);
     report("no-plugin", why);
     return false;
@@ -122,7 +135,9 @@ export async function initPurchases(userId: string | null | undefined): Promise<
   if (!apiKey || apiKey.startsWith("<")) {
     // "<paste key>" was the literal value on the server for months. Catch the placeholder
     // as well as an empty value, and say so — a missing key silently hides the paywall.
+    lastError = `no-key(${android ? "android" : "ios"}) len=${apiKey.length}`;
     console.warn(`[iap] no RevenueCat key for ${android ? "android" : "ios"} — paywall stays hidden`);
+    report("no-key", lastError);
     return false;
   }
 
@@ -135,7 +150,9 @@ export async function initPurchases(userId: string | null | undefined): Promise<
     }
     return true;
   } catch (e) {
+    lastError = `configure: ${String((e as Error)?.message || e).slice(0, 160)}`;
     console.warn("[iap] configure failed:", e);
+    report("configure-failed", lastError);
     return false;
   }
 }
