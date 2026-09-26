@@ -106,24 +106,35 @@ export default function SubscribeScreen() {
   const shownPrice = storePrices[tier === "vip" ? SUB_PRODUCTS.vip1m : SUB_PRODUCTS.basic1m] ?? `$${price}`;
 
   /**
-   * Add-ons. Inside the native app this MUST go through the store — see buyPlan below.
+   * Add-ons are paid for from the CREDIT WALLET, on web and in the app alike.
+   *
+   * They used to be a direct store purchase in the native app, which meant a separate
+   * store product per pack and a second card transaction even for members who already had
+   * a balance. Ads and job posts already spend from the wallet — because their prices are
+   * dynamic and the stores only allow fixed price points — so routing add-ons the same way
+   * means one top-up covers everything.
+   *
+   * Subscriptions are the exception and still go through the store (see buyPlan): Google
+   * requires Play Billing for auto-renewing subscriptions, and selling those another way
+   * inside the app is what gets apps removed.
    */
   async function buyAddon(pack: "voice" | "media" | "storage") {
-    if (native) {
-      if (buying) return;
-      setBuying(true);
-      const res = await buy(ADDON_PRODUCTS[pack], getAccessToken() || "");
-      setBuying(false);
-      if (res.cancelled) return;
-      setToast(res.ok ? t("premium.paidThanks") : t("common.error"));
-      setTimeout(() => setToast(null), 2600);
-      return;
-    }
-    if (fastspringEnabled) { checkout(FS_PATHS[pack], uid); return; }
+    if (!native && fastspringEnabled) { checkout(FS_PATHS[pack], uid); return; }
     if (buying) return;
     setBuying(true);
-    const res = await apiPost("/api/ai/addon", { pack }, getAccessToken() || undefined);
+    const res = await apiPost<{ error?: string; price?: number; needCents?: number }>(
+      "/api/ai/addon",
+      { pack },
+      getAccessToken() || undefined,
+    );
     setBuying(false);
+
+    // Not enough credit: say so plainly and point at the wallet, rather than a generic error.
+    if (!res.ok && res.data?.error === "insufficient_credits") {
+      setToast(t("premium.needCredits"));
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
     setToast(res.ok ? t("premium.addonDone") : t("common.error"));
     setTimeout(() => setToast(null), 2200);
   }

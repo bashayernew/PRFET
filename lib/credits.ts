@@ -17,9 +17,19 @@ import { prisma } from "@/lib/prisma";
 
 export const CENTS = 100;
 
-/** A wallet can never hold more than this. Keeps stored value sane and matches the store
- *  limits for consumable balances. $500. */
-export const MAX_BALANCE_CENTS = 500 * CENTS;
+/**
+ * A wallet can never hold more than this. Keeps stored value sane and matches the store
+ * limits for consumable balances.
+ *
+ * Raised from $500 to $1,000 (2026-09-26) because the top-up tiers now go up to **$500**.
+ * With a $500 ceiling, a member holding any balance who bought the largest pack would have
+ * been charged in full and credited only the remainder — addCredits() silently truncates to
+ * the available room. $1,000 means even a $500 top-up on top of a $500 balance lands whole.
+ *
+ * RULE: this must always be at least (largest top-up pack × 2). Raise it BEFORE adding a
+ * bigger pack, never after.
+ */
+export const MAX_BALANCE_CENTS = 1000 * CENTS;
 
 /** Dollars (as used throughout `lib/pricing.ts`) → integer cents. */
 export function toCents(dollars: number): number {
@@ -43,6 +53,16 @@ export async function addCredits(userId: string, cents: number): Promise<number>
   const have = await balance(userId);
   const room = Math.max(0, MAX_BALANCE_CENTS - have);
   const add = Math.min(Math.round(cents), room);
+
+  // Truncation means the member paid for credit they did not receive. It must never happen
+  // silently — if this ever appears in the log, the cap is too low for the tiers on sale
+  // and someone is owed a refund.
+  if (add < Math.round(cents)) {
+    console.error(
+      `[credits] TOP-UP TRUNCATED for ${userId}: paid ${cents}c, credited ${add}c ` +
+      `(balance ${have}c, cap ${MAX_BALANCE_CENTS}c). The member is owed ${Math.round(cents) - add}c.`,
+    );
+  }
   if (add <= 0) return have; // already at the cap
   const u = await prisma.user.update({
     where: { id: userId },

@@ -42,10 +42,15 @@ export const ADDON_PRODUCTS = {
  * encourage bigger top-ups; that is a pricing decision, not a code one.
  */
 export const CREDIT_PACKS: Record<string, number> = {
-  [process.env.NEXT_PUBLIC_IAP_CREDITS_5 || "prfet_credits_5"]: 499,
-  [process.env.NEXT_PUBLIC_IAP_CREDITS_10 || "prfet_credits_10"]: 999,
-  [process.env.NEXT_PUBLIC_IAP_CREDITS_20 || "prfet_credits_20"]: 1999,
-  [process.env.NEXT_PUBLIC_IAP_CREDITS_50 || "prfet_credits_50"]: 4999,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_10 || "prfet_credits_10"]: 1000,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_25 || "prfet_credits_25"]: 2500,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_50 || "prfet_credits_50"]: 5000,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_100 || "prfet_credits_100"]: 10000,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_250 || "prfet_credits_250"]: 25000,
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_500 || "prfet_credits_500"]: 50000,
+  // A $1,000 tier was considered and left out for now. If it is added later, raise
+  // MAX_BALANCE_CENTS in lib/credits.ts to at least $2,000 FIRST, or the largest top-up
+  // will be silently truncated and the buyer short-changed.
 };
 
 /** Credit pack ids in ascending order — used to build the top-up sheet. */

@@ -3,14 +3,23 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bearerFromRequest, verifyAccessToken, identifierWhere } from "@/lib/auth";
 import { aiGrantAddon, ADDON_PACKS } from "@/lib/ai-usage";
+import { spendCredits, toCents } from "@/lib/credits";
+import { createInvoice, sendPurchaseNotice } from "@/lib/invoice";
 
 /**
- * Credit an AI add-on pack (extra images/videos) to a member for the current month.
+ * Buy an AI add-on pack (extra images/videos/storage) for the current month.
  *
- * SAFE BY DEFAULT: only an admin may call this. It is the single place that grants
- * add-on credit, so when Google Play billing is wired up, the store's server-to-server
- * purchase notification should verify the receipt and then call aiGrantAddon() — never
- * trust the client to self-grant.
+ * ⚠️ This route used to grant a pack for FREE to anyone who asked. The comment called it
+ * "a temporary stand-in until store billing is wired", which meant any member could call
+ * it repeatedly and self-grant unlimited add-ons. It is now PAID, from the credit wallet.
+ *
+ * Why the wallet rather than a direct store purchase: ads and job posts already work this
+ * way, because their prices are dynamic (base + per-country + per-day) and the stores only
+ * allow fixed price points. Routing add-ons through the same balance means one top-up
+ * covers everything, there are fewer store products to maintain, and a member who already
+ * has credit can buy an add-on without another card transaction.
+ *
+ * Admin grants stay free — that is a deliberate comp, not a purchase.
  */
 const schema = z.object({
   // Omit `user` to buy the pack for yourself; an admin may pass an email/phone to credit
@@ -41,6 +50,34 @@ export async function POST(req: Request) {
     targetId = target.id;
   } else {
     qty = 1; // self-serve buys one pack at a time
+
+    // Charge the wallet BEFORE granting, so a failed payment can't leave a granted pack.
+    const s = await prisma.appSettings.findUnique({
+      where: { id: "app" },
+      select: { priceAddonVoice: true, priceAddonMedia: true, priceAddonStorage: true },
+    });
+    const price =
+      parsed.data.pack === "voice" ? (s?.priceAddonVoice ?? 1.99)
+      : parsed.data.pack === "media" ? (s?.priceAddonMedia ?? 1.99)
+      : (s?.priceAddonStorage ?? 1.99);
+
+    if (price > 0) {
+      const paid = await spendCredits(targetId, toCents(price));
+      if (!paid.ok) {
+        // 402 with the shortfall so the app can offer a top-up of the right size.
+        return NextResponse.json(
+          { error: "insufficient_credits", price, needCents: paid.short, balanceCents: paid.balance },
+          { status: 402 },
+        );
+      }
+      await createInvoice({
+        userId: targetId,
+        kind: "addon",
+        description: `Add-on pack — ${parsed.data.pack}`,
+        amount: price,
+      }).catch(() => {});
+      sendPurchaseNotice(targetId, "addon", price, parsed.data.pack).catch(() => {});
+    }
   }
   for (let i = 0; i < qty; i++) await aiGrantAddon(targetId, parsed.data.pack);
 

@@ -5,7 +5,8 @@ import { notify } from "@/lib/notify";
 export async function createInvoice(opts: {
   userId: string;
   // "support" = credits sent to another member's wallet (see /api/credits/send).
-  kind: "subscription" | "ad" | "job" | "seeker" | "support";
+  // "addon"   = an AI add-on pack, also paid from the wallet (see /api/ai/addon).
+  kind: "subscription" | "ad" | "job" | "seeker" | "support" | "addon";
   description: string;
   amount: number;
 }): Promise<void> {
@@ -71,18 +72,20 @@ export async function sendSubscriptionWelcome(subscriberId: string): Promise<voi
 }
 
 /** Localized item names by kind: [Arabic, English]. */
-const ITEM_NAMES: Record<"ad" | "job" | "seeker" | "subscription", [string, string]> = {
+const ITEM_NAMES: Record<"ad" | "job" | "seeker" | "subscription" | "addon", [string, string]> = {
   ad: ["إعلان", "Ad"],
   job: ["إعلان وظيفة", "Job ad"],
   seeker: ["إعلان باحث عن عمل", "Job-seeker ad"],
   subscription: ["اشتراك بريميوم", "Premium subscription"],
+  // Add-on packs are bought from the credit wallet, like ads and job posts.
+  addon: ["باقة إضافية", "Add-on pack"],
 };
 
 /** A purchase receipt DM from the owner — for ads, job posts, anything bought.
  *  The message is written in the buyer's own language (Arabic by default). */
 export async function sendPurchaseNotice(
   userId: string,
-  kind: "ad" | "job" | "seeker" | "subscription",
+  kind: "ad" | "job" | "seeker" | "subscription" | "addon",
   amount: number,
   detail?: string,
 ): Promise<void> {
