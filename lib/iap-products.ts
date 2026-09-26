@@ -47,7 +47,11 @@ export const CREDIT_PACKS: Record<string, number> = {
   [process.env.NEXT_PUBLIC_IAP_CREDITS_50 || "prfet_credits_50"]: 5000,
   [process.env.NEXT_PUBLIC_IAP_CREDITS_100 || "prfet_credits_100"]: 10000,
   [process.env.NEXT_PUBLIC_IAP_CREDITS_250 || "prfet_credits_250"]: 25000,
-  [process.env.NEXT_PUBLIC_IAP_CREDITS_500 || "prfet_credits_500"]: 50000,
+  // ⚠️ Priced at $400 in Play, NOT $500. Google refused $500 — it exceeds the maximum
+  // price for a single in-app product in several markets. The product ID keeps the "500"
+  // because Play IDs can never be renamed; the VALUE below is what actually matters, and
+  // it must always equal the Play price or the wallet credits more than the buyer paid.
+  [process.env.NEXT_PUBLIC_IAP_CREDITS_500 || "prfet_credits_500"]: 40000,
   // A $1,000 tier was considered and left out for now. If it is added later, raise
   // MAX_BALANCE_CENTS in lib/credits.ts to at least $2,000 FIRST, or the largest top-up
   // will be silently truncated and the buyer short-changed.
