@@ -112,6 +112,12 @@ export default function SubscribeScreen() {
         for (const it of items) if (it.identifier && it.priceString) map[it.identifier] = it.priceString;
         setStorePrices(map);
       }).catch(() => { /* fall back to the dashboard figure */ });
+    }).catch((e) => {
+      // Without this, anything thrown inside the async callback above became an unhandled
+      // rejection: no branch ran, no state was set, and the screen looked identical to
+      // "the check never happened". That ambiguity cost hours.
+      setWhy(`threw: ${String((e as Error)?.message || e).slice(0, 160)}`);
+      setNative(false);
     });
     fetch("/api/settings").then((r) => r.json())
       .then((d) => {
@@ -331,7 +337,7 @@ export default function SubscribeScreen() {
             dir="ltr"
             className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
           >
-            BUILD-B2 native={String(native)} {why || "(checking…)"}
+            BUILD-B3 native={String(native)} {why || "(checking…)"}
           </p>
         </div>
       </div>
