@@ -42,3 +42,11 @@ android/app/google-services.json
 *.jks
 *.keystore
 ses-smtp-user.*.csv
+
+# Google Cloud service-account keys. Chrome downloads these with the project id as the
+# filename, and on 2026-09-26 one landed in app/ — inside the repo — purely because that
+# was the last folder used in the save dialog. Keep the real file OUTSIDE the project
+# (D:\secrets\ on the owner's PC); these patterns are the backstop.
+gen-lang-client-*.json
+*-service-account*.json
+*serviceaccount*.json
