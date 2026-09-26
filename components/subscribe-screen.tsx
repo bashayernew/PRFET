@@ -111,15 +111,26 @@ export default function SubscribeScreen() {
         report("not-native", detail);
         return;
       }
-      const me = await apiGet<{ user: { id: string } }>("/api/auth/me", token);
-      setWhy("init-starting");
-      const ready = me.ok && me.data?.user?.id ? await initPurchases(me.data.user.id) : false;
-      setNative(ready);
-      if (!ready) {
-        // The native branch had no on-screen diagnostic, so a failure here looked identical
-        // to "never ran". iapLastError() carries the specific reason.
-        setWhy(`native-ok-but-init-failed: ${iapLastError() || (me.ok ? "no user id" : "auth/me failed")}`);
-        return;
+      /**
+       * Show the store UI as soon as we know we are in the app. Do NOT wait for RevenueCat.
+       *
+       * This used to `await initPurchases(...)` before revealing the buttons, so any delay
+       * or hang in the native SDK left the paywall invisible with no explanation — which is
+       * exactly what happened: initialisation never settled, and the screen sat there
+       * looking like the feature did not exist.
+       *
+       * Initialisation is kicked off in the background and retried at purchase time (it is
+       * idempotent). If it genuinely cannot work, the member finds out when they tap Buy
+       * and gets a real message — far better than a screen that silently offers nothing.
+       */
+      setNative(true);
+
+      const me = await apiGet<{ user: { id: string } }>("/api/auth/me", token).catch(() => null);
+      const myId = me?.ok ? me.data?.user?.id : undefined;
+      if (myId) {
+        initPurchases(myId)
+          .then((ok) => { if (!ok) setWhy(iapLastError() || "init failed"); })
+          .catch((e) => setWhy(String((e as Error)?.message || e).slice(0, 120)));
       }
       /**
        * Inside the app, show the price the STORE will actually charge.
@@ -357,12 +368,12 @@ export default function SubscribeScreen() {
             can't see it". Rendering unconditionally in red means its ABSENCE is now proof
             that the device is running stale JavaScript, which is the thing we need to know.
           */}
-          <p
-            dir="ltr"
-            className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
-          >
-            BUILD-B7 native={String(native)} {why || "(checking…)"}
-          </p>
+          {/* Quiet diagnostic: only appears if purchases genuinely cannot start. */}
+          {!!why && (
+            <p dir="ltr" className="mt-3 break-all text-[10px] font-mono leading-tight text-muted">
+              {why}
+            </p>
+          )}
         </div>
       </div>
 

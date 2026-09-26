@@ -222,6 +222,19 @@ export async function buy(productId: string, token: string): Promise<{ ok: boole
   const p = await plugin();
   if (!p) return { ok: false, error: "not_native" };
 
+  /**
+   * Make sure the SDK is configured before buying.
+   *
+   * The paywall no longer waits for initialisation before showing its buttons — a hang
+   * there used to hide the whole screen. So the member can reach this point before
+   * configure() has finished, and purchasing against an unconfigured SDK fails in a
+   * confusing way. configure() is idempotent, so calling it here is cheap and safe.
+   */
+  if (!configured) {
+    const ok = await initPurchases(null).catch(() => false);
+    if (!ok) return { ok: false, error: lastError || "not_configured" };
+  }
+
   try {
     const offerings = await p.getOfferings().catch(() => null);
     const pkg = offerings?.current?.availablePackages?.find((x) => x.product?.identifier === productId);
