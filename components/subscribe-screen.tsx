@@ -69,14 +69,14 @@ export default function SubscribeScreen() {
           Capacitor?: { isNativePlatform?: () => boolean };
           PrfetNative?: unknown;
         };
-        const looksLikeApp = !!w.PrfetNative || /wv\)|; wv|Capacitor/i.test(navigator.userAgent);
-        if (looksLikeApp) {
-          report(
-            "not-native",
-            `Capacitor=${!!w.Capacitor} isNativePlatform=${!!w.Capacitor?.isNativePlatform} ` +
-            `PrfetNative=${!!w.PrfetNative} ua=${navigator.userAgent.slice(0, 90)}`,
-          );
-        }
+        // Report unconditionally. An earlier version only reported when the user agent
+        // "looked like" the app — which silently suppressed the exact case being hunted,
+        // because a Capacitor WebView does not always advertise itself in the UA.
+        report(
+          "not-native",
+          `Capacitor=${!!w.Capacitor} isNativePlatform=${!!w.Capacitor?.isNativePlatform} ` +
+          `PrfetNative=${!!w.PrfetNative} ua=${navigator.userAgent.slice(0, 90)}`,
+        );
         return;
       }
       const me = await apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined);

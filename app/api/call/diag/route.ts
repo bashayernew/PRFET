@@ -28,7 +28,20 @@ export async function POST(req: Request) {
 
   const token = bearerFromRequest(req);
   const payload = token ? verifyAccessToken(token) : null;
-  if (!payload) return NextResponse.json({ ok: true });
+
+  // An unauthenticated report used to be dropped in silence. That hid the one case worth
+  // seeing: a device that cannot reach a feature BECAUSE its session is not what we think
+  // it is. It is rate-limited above and stores nothing, so logging it anonymously is safe
+  // and far more useful than saying nothing.
+  if (!payload) {
+    let stage = "?";
+    try {
+      const body = (await req.clone().json()) as { stage?: string; detail?: string };
+      stage = `${body?.stage ?? "?"} | ${body?.detail ?? ""}`.slice(0, 300);
+    } catch { /* body unreadable — still worth recording the attempt */ }
+    console.log(`[call] DEVICE (no auth) | ${stage} | ${(req.headers.get("user-agent") || "").slice(0, 80)}`);
+    return NextResponse.json({ ok: true });
+  }
 
   let raw: unknown;
   try { raw = await req.json(); } catch { return NextResponse.json({ ok: true }); }
