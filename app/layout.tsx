@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Cairo } from "next/font/google";
 import "./globals.css";
 import { I18nProvider } from "@/lib/i18n";
 import CallHost from "@/components/call-host";
@@ -8,26 +7,20 @@ import BlockedGate from "@/components/blocked-gate";
 import AudioUnlock from "@/components/audio-unlock";
 
 /**
- * next/font downloads Cairo from Google's servers during `npm run build`.
+ * Cairo is loaded at RUNTIME via a stylesheet link, not through next/font.
  *
- * On 2026-09-26 that request failed and the whole deploy died with
+ * next/font downloads the font from Google during `npm run build`. On 2026-09-26 that
+ * request kept failing from the production server and killed every deploy with
  * `TypeError: Cannot read properties of null` inside @next/font's loader — nothing to do
- * with our code. A production deploy that can only succeed while fonts.googleapis.com is
- * reachable is a fragile thing to have in the release path.
+ * with our code, and nothing we could fix from here.
  *
- * `adjustFontFallback` and an explicit `fallback` stack mean the page still renders
- * correctly in a system Arabic font if the download is ever unavailable, rather than
- * shipping a broken layout.
+ * A release pipeline must not depend on a third party being reachable at build time. The
+ * link below is fetched by the browser instead, and `--font-cairo` (defined in
+ * globals.css) falls back to a system Arabic stack if Google is unreachable, so the worst
+ * case is a slightly different typeface rather than a failed deploy or a broken page.
  */
-const cairo = Cairo({
-  subsets: ["arabic", "latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-cairo",
-  display: "swap",
-  fallback: ["Segoe UI", "Tahoma", "Arial", "sans-serif"],
-  adjustFontFallback: false,
-});
-
+const FONT_HREF =
+  "https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap";
 export const metadata: Metadata = {
   title: "PRFET",
   description: "اكتشف وتواصل مع ما حولك — Discover and connect with what's around you.",
@@ -47,7 +40,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
-      <body className={`${cairo.variable} font-[family-name:var(--font-cairo)] antialiased`}>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href={FONT_HREF} />
+      </head>
+      <body className="font-[family-name:var(--font-cairo)] antialiased">
         <I18nProvider>
           {children}
           {/* the first tap anywhere unlocks audio, so live rooms are never silent */}

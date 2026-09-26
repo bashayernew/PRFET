@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/**
+ * The app font.
+ *
+ * This used to come from next/font, which downloads Cairo from Google DURING THE BUILD —
+ * so when that request failed from the production server, the whole deploy failed with an
+ * error inside Next's font loader. The stylesheet is now linked in app/layout.tsx and
+ * fetched by the browser instead, and this variable degrades to a system Arabic stack if
+ * Google is unreachable. A failed font should cost a typeface, never a release.
+ */
+:root {
+  --font-cairo: "Cairo", "Segoe UI", "Tahoma", "Arial", sans-serif;
+}
+
 /* ---- PRFET design tokens — neon violet on deep space purple ----
  *
  * COLOURS ONLY. Every layout, size, radius and component stays exactly as it was:
