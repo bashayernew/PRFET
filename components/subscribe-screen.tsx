@@ -50,9 +50,26 @@ export default function SubscribeScreen() {
   const { checkout } = useFastSpring(() => { setToast(t("premium.paidThanks")); setTimeout(() => setToast(null), 3500); });
 
   useEffect(() => {
-    apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined).then((r) => {
-      if (r.ok && r.data?.user) setUid(r.data.user.id);
-    });
+    /**
+     * getAccessToken() reads localStorage, which THROWS in a WebView when storage is
+     * restricted. A synchronous throw here killed the rest of the effect — including the
+     * isNative() check below — so the paywall stayed hidden and the on-screen diagnostic
+     * stayed blank, which read as "the check never ran". It never did.
+     */
+    let token: string | undefined;
+    try {
+      token = getAccessToken() || undefined;
+    } catch (e) {
+      setWhy(`token-read-threw: ${String((e as Error)?.message || e).slice(0, 120)}`);
+    }
+
+    try {
+      apiGet<{ user: { id: string } }>("/api/auth/me", token).then((r) => {
+        if (r.ok && r.data?.user) setUid(r.data.user.id);
+      }).catch(() => { /* uid is cosmetic here; the native check below is what matters */ });
+    } catch (e) {
+      setWhy(`me-threw: ${String((e as Error)?.message || e).slice(0, 120)}`);
+    }
     // RevenueCat has to know which account is buying, or the webhook can't attribute the
     // purchase to anyone. isNative() is false on the web, where this whole path is skipped.
     /**
@@ -88,7 +105,7 @@ export default function SubscribeScreen() {
         report("not-native", detail);
         return;
       }
-      const me = await apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined);
+      const me = await apiGet<{ user: { id: string } }>("/api/auth/me", token);
       const ready = me.ok && me.data?.user?.id ? await initPurchases(me.data.user.id) : false;
       setNative(ready);
       if (!ready) {
@@ -337,7 +354,7 @@ export default function SubscribeScreen() {
             dir="ltr"
             className="mt-4 break-all rounded-xl bg-red-600 p-2 text-[11px] font-mono font-bold leading-tight text-white"
           >
-            BUILD-B3 native={String(native)} {why || "(checking…)"}
+            BUILD-B4 native={String(native)} {why || "(checking…)"}
           </p>
         </div>
       </div>
