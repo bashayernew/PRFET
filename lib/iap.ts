@@ -37,30 +37,43 @@ export type RcOffering = { identifier: string; availablePackages: RcPackage[] };
 
 let configured = false;
 
-/** True only inside the Capacitor native shell. */
+/**
+ * True only inside the Capacitor native shell.
+ *
+ * ⚠️ This used to do `await import(capName)` with a VARIABLE specifier and
+ * `webpackIgnore: true`. That combination tells the bundler to leave the import alone, so
+ * at runtime the browser tried to resolve the bare specifier "@capacitor/core" as a URL,
+ * which it cannot do. The import threw, the catch returned false, and isNative() was
+ * therefore **always false — including inside the app**.
+ *
+ * The visible symptom was that the subscribe screen never showed purchase buttons, no
+ * matter how correctly Play and RevenueCat were configured. It looked like a payments
+ * problem and was a module-resolution problem.
+ *
+ * `window.Capacitor` is injected by the native shell and needs no import at all. This is
+ * the same check lib/native-push.ts uses — and push notifications have always worked,
+ * which is what gave the bug away.
+ */
 export async function isNative(): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  try {
-    const capName = "@capacitor/core";
-    const cap = (await import(/* webpackIgnore: true */ /* @vite-ignore */ capName)) as {
-      Capacitor?: { isNativePlatform?: () => boolean };
-    };
-    return !!cap?.Capacitor?.isNativePlatform?.();
-  } catch {
-    return false;
-  }
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return !!cap?.isNativePlatform?.();
 }
 
 async function plugin(): Promise<PurchasesPlugin | null> {
   if (!(await isNative())) return null;
   try {
-    const name = "@revenuecat/purchases-capacitor";
-    const mod = (await import(/* webpackIgnore: true */ /* @vite-ignore */ name)) as {
+    // A STATIC specifier, so the bundler code-splits it into a real chunk that exists at
+    // runtime. Reached only after the isNative() check above, so the web bundle never
+    // executes it. Same pattern as lib/native-push.ts.
+    const mod = (await import("@revenuecat/purchases-capacitor")) as unknown as {
       Purchases?: PurchasesPlugin;
       default?: PurchasesPlugin;
     };
     return mod.Purchases ?? mod.default ?? null;
-  } catch {
+  } catch (e) {
+    // Never silent: without this the paywall just disappears and there is nothing to debug.
+    console.warn("[iap] RevenueCat plugin unavailable:", e);
     return null;
   }
 }
@@ -74,14 +87,23 @@ async function plugin(): Promise<PurchasesPlugin | null> {
  */
 export async function initPurchases(userId: string | null | undefined): Promise<boolean> {
   const p = await plugin();
-  if (!p) return false;
+  if (!p) {
+    console.warn("[iap] no plugin — not in the native app, or the SDK is missing from this build");
+    return false;
+  }
 
   // iOS and Android use different public keys; both are safe to ship in the client.
+  const android = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
   const apiKey =
-    (typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)
+    (android
       ? process.env.NEXT_PUBLIC_REVENUECAT_ANDROID_KEY
       : process.env.NEXT_PUBLIC_REVENUECAT_IOS_KEY) || "";
-  if (!apiKey) return false;
+  if (!apiKey || apiKey.startsWith("<")) {
+    // "<paste key>" was the literal value on the server for months. Catch the placeholder
+    // as well as an empty value, and say so — a missing key silently hides the paywall.
+    console.warn(`[iap] no RevenueCat key for ${android ? "android" : "ios"} — paywall stays hidden`);
+    return false;
+  }
 
   try {
     if (!configured) {
@@ -91,7 +113,8 @@ export async function initPurchases(userId: string | null | undefined): Promise<
       await p.logIn({ appUserID: userId });
     }
     return true;
-  } catch {
+  } catch (e) {
+    console.warn("[iap] configure failed:", e);
     return false;
   }
 }
