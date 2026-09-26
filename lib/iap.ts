@@ -45,7 +45,7 @@ let configured = false;
  * another country. This reuses the /api/call/diag reporter — it stores nothing, it just
  * prints to `docker compose logs app` so the cause is visible from the server.
  */
-async function report(stage: string, detail: string): Promise<void> {
+export async function report(stage: string, detail: string): Promise<void> {
   try {
     await apiPost("/api/call/diag", { stage: `iap:${stage}`, detail }, getAccessToken() || undefined);
   } catch {

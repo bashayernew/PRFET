@@ -7,7 +7,7 @@ import { useI18n } from "@/lib/i18n";
 import { useRequireAuth } from "@/lib/use-auth";
 import { apiPost, apiGet, getAccessToken } from "@/lib/api";
 import { useFastSpring, fastspringEnabled, FS_PATHS } from "@/components/fastspring-checkout";
-import { isNative, initPurchases, buy, restore, listProducts } from "@/lib/iap";
+import { isNative, initPurchases, buy, restore, listProducts, report } from "@/lib/iap";
 import { SUB_PRODUCTS, ADDON_PRODUCTS } from "@/lib/iap-products";
 
 // Fill {placeholders} in a translated string with live numbers from the dashboard settings.
@@ -60,7 +60,25 @@ export default function SubscribeScreen() {
      * which is exactly the condition for hiding them.
      */
     isNative().then(async (n) => {
-      if (!n) { setNative(false); return; }
+      if (!n) {
+        setNative(false);
+        // Report WHY, or a hidden paywall is undiagnosable from the server. Only inside
+        // something that looks like the app — a desktop browser hitting this is normal and
+        // must not spam the log.
+        const w = window as unknown as {
+          Capacitor?: { isNativePlatform?: () => boolean };
+          PrfetNative?: unknown;
+        };
+        const looksLikeApp = !!w.PrfetNative || /wv\)|; wv|Capacitor/i.test(navigator.userAgent);
+        if (looksLikeApp) {
+          report(
+            "not-native",
+            `Capacitor=${!!w.Capacitor} isNativePlatform=${!!w.Capacitor?.isNativePlatform} ` +
+            `PrfetNative=${!!w.PrfetNative} ua=${navigator.userAgent.slice(0, 90)}`,
+          );
+        }
+        return;
+      }
       const me = await apiGet<{ user: { id: string } }>("/api/auth/me", getAccessToken() || undefined);
       const ready = me.ok && me.data?.user?.id ? await initPurchases(me.data.user.id) : false;
       setNative(ready);
